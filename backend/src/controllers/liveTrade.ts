@@ -23,6 +23,7 @@ import { venueRouter } from '../services/venues';
 import { AccountLike } from '../services/venues/router';
 import { OrderKind, OrderSide, VenuePosition } from '../services/venues/types';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
+import { recordClosedTrade } from '../services/ai/statsRollup';
 
 /** Find the account record a request is aimed at. */
 export function findAccount(user: any, accountId?: string): AccountLike | undefined {
@@ -76,8 +77,16 @@ async function mirror(
         };
 
         if (existing) {
+            const closedNow = fields.status === 'CLOSED' && existing.status !== 'CLOSED'
+                && typeof fields.finalProfit === 'number';
             Object.assign(existing, fields);
             await existing.save();
+            if (closedNow) {
+                // Live closes bypass creditRealisedPnL (the broker owns the
+                // balance), so the stats rollup hooks in here instead.
+                void recordClosedTrade(userId, String(p.accountId), Number(fields.finalProfit))
+                    .catch(() => undefined);
+            }
             return existing;
         }
 

@@ -159,6 +159,9 @@ export default function AICoachScreen() {
             if (error.response) {
                 if (error.response.status === 401) {
                     detailedError = 'Session expired or invalid. Please log out and log in again from the Profile tab.';
+                } else if (error.response.status === 429 && error.response.data?.paywall) {
+                    const u = error.response.data.usage;
+                    detailedError = `You have used all ${u?.limit ?? ''} free AI messages for today. Your quota resets at midnight UTC.`;
                 } else {
                     detailedError = `Server Error (${error.response.status}): ${error.response.data?.error || error.response.data?.message || 'Internal Server Error'}`;
                 }
@@ -172,35 +175,31 @@ export default function AICoachScreen() {
         }
     };
 
-    const executeTradeFromSignal = async (signalData: any) => {
+    // The AI never executes anything: it sends a proposal card, and THIS
+    // button — a human tap — is the only thing that turns it into an order.
+    // The order carries exactly the proposal's numbers (volume, SL, TP).
+    const executeProposal = async (proposal: any) => {
         try {
-            showToast('Executing trade...', 'info');
+            showToast('Placing order...', 'info');
             const token = await getItemAsync('accessToken');
             const response = await axios.post(`${BACKEND_URL}/api/v1/trade/execute`, {
-                symbol: signalData.symbol,
-                side: signalData.side,
+                symbol: proposal.symbol,
+                side: proposal.side,
                 orderType: 'MARKET',
-                volume: 1.0, 
-                currentPrice: signalData.entry
+                volume: proposal.volume,
+                stopLoss: proposal.stopLoss ?? undefined,
+                takeProfit: proposal.takeProfit ?? undefined,
             }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
             if (response.data.success) {
-                if (signalData.tp || signalData.sl) {
-                    const modifyToken = await getItemAsync('accessToken');
-                    await axios.post(`${BACKEND_URL}/api/v1/trade/modify`, {
-                        positionId: response.data.data.id,
-                        takeProfit: signalData.tp,
-                        stopLoss: signalData.sl
-                    }, {
-                        headers: { Authorization: `Bearer ${modifyToken}` }
-                    });
-                }
-                showToast(`${signalData.side} ${signalData.symbol} executed successfully!`, 'success');
+                showToast(`${proposal.side} ${proposal.volume} lot ${proposal.symbol} placed`, 'success');
+            } else {
+                showToast(response.data.message || 'Order was not accepted', 'error');
             }
         } catch (e: any) {
-            showToast(`Error: ${e.message}`, 'error');
+            showToast(`Error: ${e.response?.data?.message || e.message}`, 'error');
         }
     };
 
@@ -218,10 +217,24 @@ export default function AICoachScreen() {
                         <Text style={styles.widgetLabel}>Open Trades:</Text>
                         <Text style={styles.widgetValue}>{widget.data.openTrades}</Text>
                     </View>
-                    <View style={styles.widgetRow}>
-                        <Text style={styles.widgetLabel}>Health Score:</Text>
-                        <Text style={[styles.widgetValue, { color: colors.success }]}>{widget.data.score}/100</Text>
-                    </View>
+                    {typeof widget.data.equity === 'number' && (
+                        <View style={styles.widgetRow}>
+                            <Text style={styles.widgetLabel}>Equity:</Text>
+                            <Text style={styles.widgetValue}>${Number(widget.data.equity).toFixed(2)}</Text>
+                        </View>
+                    )}
+                    {typeof widget.data.freeMargin === 'number' && (
+                        <View style={styles.widgetRow}>
+                            <Text style={styles.widgetLabel}>Free Margin:</Text>
+                            <Text style={styles.widgetValue}>${Number(widget.data.freeMargin).toFixed(2)}</Text>
+                        </View>
+                    )}
+                    {typeof widget.data.marginLevelPct === 'number' && (
+                        <View style={styles.widgetRow}>
+                            <Text style={styles.widgetLabel}>Margin Level:</Text>
+                            <Text style={styles.widgetValue}>{Number(widget.data.marginLevelPct).toFixed(0)}%</Text>
+                        </View>
+                    )}
                     <View style={styles.widgetSuggestionList}>
                         {widget.data.suggestions.map((s: string, i: number) => (
                             <View {...{key: i}} style={styles.widgetSuggestionRow}>
@@ -234,37 +247,52 @@ export default function AICoachScreen() {
             );
         }
 
-        if (widget.type === 'signal') {
-            const isBuy = widget.data.side === 'BUY';
+        if (widget.type === 'order_proposal' || widget.type === 'signal') {
+            const d = widget.data?.proposal ?? widget.data ?? {};
+            const isBuy = d.side === 'BUY';
+            const volume = Number(d.volume) > 0 ? Number(d.volume) : null;
+            const sl = d.stopLoss ?? d.sl ?? null;
+            const tp = d.takeProfit ?? d.tp ?? null;
             return (
                 <GlassView intensity={20} style={[styles.widgetCard, { borderColor: isBuy ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' }]}>
                     <View style={styles.widgetHeader}>
                         <Zap color={isBuy ? colors.success : colors.danger} size={18} />
-                        <Text style={[styles.widgetTitle, { color: isBuy ? colors.success : colors.danger }]}>{widget.data.symbol} {widget.data.side}</Text>
+                        <Text style={[styles.widgetTitle, { color: isBuy ? colors.success : colors.danger }]}>{d.symbol} {d.side}</Text>
                         <View style={styles.spacer} />
                         <View style={styles.confidenceBadge}>
-                            <Text style={styles.confidenceText}>{widget.data.confidence}% Conf.</Text>
+                            <Text style={styles.confidenceText}>Proposal</Text>
                         </View>
                     </View>
                     <View style={styles.widgetTargetRow}>
                         <View>
-                            <Text style={styles.widgetLabel}>Entry</Text>
-                            <Text style={styles.widgetValue}>{widget.data.entry}</Text>
+                            <Text style={styles.widgetLabel}>Entry ≈</Text>
+                            <Text style={styles.widgetValue}>{d.estimatedEntry ?? d.entry ?? '—'}</Text>
                         </View>
                         <View>
                             <Text style={styles.widgetLabel}>Take Profit</Text>
-                            <Text style={[styles.widgetValue, { color: colors.success }]}>{widget.data.tp}</Text>
+                            <Text style={[styles.widgetValue, { color: colors.success }]}>{tp ?? '—'}</Text>
                         </View>
                         <View>
                             <Text style={styles.widgetLabel}>Stop Loss</Text>
-                            <Text style={[styles.widgetValue, { color: colors.danger }]}>{widget.data.sl}</Text>
+                            <Text style={[styles.widgetValue, { color: colors.danger }]}>{sl ?? '—'}</Text>
                         </View>
                     </View>
-                    <TouchableOpacity onPress={() => executeTradeFromSignal(widget.data)}>
-                        <LinearGradient colors={isBuy ? ['#089981', '#056B5A'] : ['#F23645', '#B82330']} style={styles.executeSignalBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                            <Text style={styles.executeSignalBtnText}>Execute 1.00 Lot</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
+                    {(typeof d.riskMoney === 'number' || typeof d.rewardRiskRatio === 'number') && (
+                        <View style={styles.widgetRow}>
+                            <Text style={styles.widgetLabel}>
+                                {typeof d.riskMoney === 'number' ? `Risk $${d.riskMoney.toFixed(2)}` : ''}
+                                {typeof d.rewardRiskRatio === 'number' ? `  ·  R:R ${d.rewardRiskRatio.toFixed(2)}` : ''}
+                            </Text>
+                        </View>
+                    )}
+                    {d.rationale ? <Text style={styles.widgetSuggestionText}>{d.rationale}</Text> : null}
+                    {volume !== null && (
+                        <TouchableOpacity onPress={() => executeProposal({ ...d, volume })}>
+                            <LinearGradient colors={isBuy ? ['#089981', '#056B5A'] : ['#F23645', '#B82330']} style={styles.executeSignalBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                <Text style={styles.executeSignalBtnText}>Confirm {d.side} {volume} lot</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    )}
                 </GlassView>
             );
         }

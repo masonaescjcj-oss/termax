@@ -19,6 +19,7 @@ import TradeHistory from '../models/TradeHistory';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
+import { recordClosedTrade } from '../services/ai/statsRollup';
 import { venueKindForAccount } from '../services/venues';
 import {
     findAccount, openLiveOrder, closeLivePosition, modifyLivePosition, getLivePositions,
@@ -720,6 +721,10 @@ async function creditRealisedPnL(user: any, pos: any, amount: number): Promise<b
     if (account.balance < 0) account.balance = 0;
     user.markModified?.('cTraderAccounts');
     await user.save();
+    // Trade-stats rollup: one tiny upsert per close, so the AI can answer
+    // "how am I doing?" without aggregating position history every time.
+    void recordClosedTrade(String(user.id ?? user._id), String(account.cTraderId ?? ''), amount)
+        .catch(() => undefined);
     return true;
 }
 
