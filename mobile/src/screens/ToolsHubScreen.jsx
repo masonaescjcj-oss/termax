@@ -1403,6 +1403,20 @@ function ToolsHubInner(initialActiveTool = null, onBack = null, onActiveToolChan
             })
           }),(0,L.jsx)(d.default,{
             style:o.gridItem,children:(0,L.jsxs)(O,{
+              onPress:()=>l.navigate('Bots'),style:o.dashboardCard,children:[(0,L.jsx)(d.default,{
+                style:[o.iconCircle,{
+                  backgroundColor:r?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.03)',borderWidth:1,borderColor:r?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'
+                }],children:(0,L.jsx)(v.Bot,{
+                  color:"#34D399",size:26
+                })
+              }),(0,L.jsx)(c.default,{
+                numberOfLines:1,adjustsFontSizeToFit:true,style:o.cardTitle,children:"Trading Bots"
+              }),(0,L.jsx)(c.default,{
+                style:o.cardDesc,children:"AI Strategies"
+              })]
+            })
+          }),(0,L.jsx)(d.default,{
+            style:o.gridItem,children:(0,L.jsxs)(O,{
               onPress:()=>l.navigate('NewsRadar'),style:o.dashboardCard,children:[(0,L.jsx)(d.default,{
                 style:[o.iconCircle,{
                   backgroundColor:r?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.03)',borderWidth:1,borderColor:r?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'
