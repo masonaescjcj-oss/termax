@@ -15,6 +15,7 @@ import GlassView from '../components/GlassView';
 import * as ConfigModule from '../config';
 import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
 import { jsxDEV as _jsxDEV } from 'react/jsx-dev-runtime';
+import { revaluePnL, markPrice, totalMargin as sumMargin, canRevalue } from '../lib/positionMath';
 
 // Fallback mocks for React Refresh functions in production mode
 const $RefreshSig$ = () => () => {};
@@ -173,27 +174,12 @@ function runPositionsModule(global, require, _$_IMPORT_DEFAULT, _$_IMPORT_ALL, m
     const liveAccountMetrics = (0, _react.useMemo)(() => {
       const balance = (account && account.balance !== undefined) ? account.balance : (selectedAccount?.balance || 10000);
       let totalPnL = 0;
-      let totalMargin = 0;
-      const LEVERAGE = 200;
-
-      const contractSizes = {
-        'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-        'XRP/USDT': 1, 'ADA/USDT': 1, 'DOGE/USDT': 1, 'AVAX/USDT': 1,
-        'LINK/USDT': 1, 'DOT/USDT': 1, 'MATIC/USDT': 1, 'SHIB/USDT': 1,
-        'LTC/USDT': 1, 'TRX/USDT': 1, 'UNI/USDT': 1,
-        'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-        'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-        'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1
-      };
-
-      positions.forEach(p => {
-        if (p.status === 'OPEN' || p.status === 'PENDING') {
-          totalPnL += (p.unrealizedPnL || 0);
-          const cs = contractSizes[p.symbol] || 1;
-          const entryPrice = p.entryPrice || 0;
-          totalMargin += (p.volume * cs * entryPrice) / LEVERAGE;
-        }
-      });
+      // Margin comes from the server, which charges it on the instrument's
+      // base-currency notional at that instrument's own leverage. Deriving it
+      // here from a local contract-size table produced nonsense for forex.
+      const held = positions.filter(p => p.status === 'OPEN' || p.status === 'PENDING');
+      held.forEach(p => { totalPnL += (p.unrealizedPnL || 0); });
+      let totalMargin = sumMargin(held);
 
       const equity = balance + totalPnL;
       const freeMargin = equity - totalMargin;
@@ -457,30 +443,12 @@ function runPositionsModule(global, require, _$_IMPORT_DEFAULT, _$_IMPORT_ALL, m
           let changed = false;
           const newPos = prev.map(p => {
             if ((p.status === 'OPEN' || p.status === 'PENDING') && p.symbol === data.symbol) {
-              const pnlMultipliers = {
-                'BTC/USDT': 1,
-                'ETH/USDT': 1,
-                'BNB/USDT': 1,
-                'SOL/USDT': 1,
-                'GOLD': 100,
-                'SILVER': 5000,
-                'USOIL': 1000,
-                'SPX': 1,
-                'NDQ': 1,
-                'DJI': 1,
-                'VIX': 1,
-                'DXY': 1,
-                'AAPL': 1,
-                'MSFT': 1,
-                'NVDA': 1,
-                'GOOGL': 1,
-                'AMZN': 1,
-                'TSLA': 1,
-                'NFLX': 1
-              };
-              const mult = pnlMultipliers[p.symbol] || 1;
-              const diff = p.side === 'BUY' ? data.price - p.entryPrice : p.entryPrice - data.price;
-              const newPnl = diff * p.volume * mult - (p.commission || 0);
+              // Mark against the side the position closes at, using the
+              // contract terms the server sent with it.
+              const mark = markPrice(p.side, data);
+              const revalued = mark === undefined ? null : revaluePnL(p, mark);
+              if (revalued === null) return p;
+              const newPnl = revalued;
               if (Math.abs((p.unrealizedPnL || 0) - newPnl) > 0.01) {
                 changed = true;
                 return {
@@ -719,28 +687,8 @@ function runPositionsModule(global, require, _$_IMPORT_DEFAULT, _$_IMPORT_ALL, m
       const pos = selectedPositionForModify;
       if (!pos) return null;
       const entryPrice = pos.entryPrice || 0;
-      const pnlMultipliers = {
-        'BTC/USDT': 1,
-        'ETH/USDT': 1,
-        'BNB/USDT': 1,
-        'SOL/USDT': 1,
-        'GOLD': 100,
-        'SILVER': 5000,
-        'USOIL': 1000,
-        'SPX': 1,
-        'NDQ': 1,
-        'DJI': 1,
-        'VIX': 1,
-        'DXY': 1,
-        'AAPL': 1,
-        'MSFT': 1,
-        'NVDA': 1,
-        'GOOGL': 1,
-        'AMZN': 1,
-        'TSLA': 1,
-        'NFLX': 1
-      };
-      const mult = pnlMultipliers[pos.symbol] || 1;
+      // Contract size x quote-currency rate, straight from the server.
+      const mult = canRevalue(pos) ? pos.contractSize * pos.quoteRate : 1;
       if (modifyMode === 'TP') {
         const tp = parseFloat(takeProfitVal);
         if (isNaN(tp) || tp <= 0) return {

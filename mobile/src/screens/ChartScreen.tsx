@@ -19,6 +19,7 @@ import { colors as defaultColors } from '../theme/colors';
 import { BACKEND_URL, isTelegram, getTgSafeAreaTop } from '../config';
 import { useAccountStore } from '../store/accountStore';
 import { SVG_ICONS } from '../components/SvgIcons';
+import { revaluePnL, markPrice, canRevalue } from '../lib/positionMath';
 
 const SYMBOLSList = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'GOLD', 'SILVER', 'SPX', 'NDQ', 'USOIL', 'AAPL', 'TSLA'];
 
@@ -1372,17 +1373,12 @@ export default function ChartScreen({ navigation, route }: any) {
         sendMessageToChart(JSON.stringify({ type: 'update', data: updateData }));
 
         // Update positions overlay with live PnL
-        const pnlMultipliers: Record<string, number> = {
-            'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-            'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-            'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-            'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-        };
         const chartPositions = openPositionsRef.current.filter(p => p.symbol === symbol).map(pos => {
-             const diff = data.price - pos.entryPrice;
-             const mult = pnlMultipliers[pos.symbol] || 1;
-             const pnl = pos.side === 'BUY' ? diff * pos.volume * mult : -diff * pos.volume * mult;
-             return { ...pos, unrealizedPnL: pnl - (pos.commission || 0) };
+             // Revalue on the closing side using the contract terms the
+             // server ships with each position.
+             const mark = markPrice(pos.side, data);
+             const pnl = mark === undefined ? null : revaluePnL(pos, mark);
+             return pnl === null ? pos : { ...pos, unrealizedPnL: pnl };
         });
         // Always call drawPositions, even if empty, so it clears them if all were closed
         sendMessageToChart(JSON.stringify({ type: 'drawPositions', positions: chartPositions }));
@@ -2046,16 +2042,12 @@ export default function ChartScreen({ navigation, route }: any) {
                 </Text>
                 <Text style={{ color: colors.text, fontSize: 24, fontWeight: 'bold' }}>{selectedPosition?.entryPrice}</Text>
                 {selectedPosition?.status !== 'PENDING' && (() => {
-                  const pnlMultipliers: Record<string, number> = {
-                      'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-                      'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-                      'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-                      'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-                  };
-                  const mult = selectedPosition ? (pnlMultipliers[selectedPosition.symbol] || 1) : 1;
                   const currentPrice = livePrice !== '...' ? parseFloat(livePrice) : selectedPosition?.entryPrice;
-                  const diff = selectedPosition?.side === 'BUY' ? (currentPrice - selectedPosition?.entryPrice) : (selectedPosition?.entryPrice - currentPrice);
-                  const pnl = selectedPosition ? diff * selectedPosition.volume * mult : 0;
+                  // Revalue via the server-supplied contract terms; fall back
+                  // to the server's own figure when they are unavailable.
+                  const pnl = selectedPosition
+                    ? (revaluePnL(selectedPosition, currentPrice) ?? (selectedPosition.unrealizedPnL || 0))
+                    : 0;
                   return (
                     <Text style={{ color: pnl >= 0 ? chartTheme.up : chartTheme.down, fontSize: 14, marginTop: 4 }}>
                       {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)} USD

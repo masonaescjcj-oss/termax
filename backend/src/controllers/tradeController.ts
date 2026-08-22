@@ -1,6 +1,16 @@
 import { Request, Response } from 'express';
 import { getAuthUrl, getAccessToken, setToken, getToken } from '../services/ctraderService';
 import { priceCache, fetchSinglePrice } from '../sockets/marketSocket';
+import {
+    getSpec, roundPrice, normaliseVolume,
+} from '../config/instruments';
+import {
+    marginRequired as calcMargin, pipValue, unrealizedPnL as calcFloatingPnL,
+    realizedPnL, commissionFor, accountMetrics, openPrice as bookOpenPrice,
+    closePrice as bookClosePrice, getMid, getQuote, nightlySwap, swapMultiplier,
+    rateToAccount,
+    MARGIN_CALL_LEVEL, STOP_OUT_LEVEL, Side,
+} from '../services/pricing';
 import Position from '../models/Position';
 import TradeHistory from '../models/TradeHistory';
 import User from '../models/User';
@@ -98,17 +108,22 @@ export function processTrailingStops(symbol: string, currentPrice: number): stri
 
         let slChanged = false;
 
+        // Trail from the price the position would close at, and round to the
+        // instrument's own precision — a flat 5 decimals mangles JPY pairs
+        // (3 dp), indices (1 dp) and gold (2 dp).
+        const exitSide = bookClosePrice(symbol, pos.side as Side) ?? currentPrice;
+
         if (pos.side === 'BUY') {
-            const newSL = currentPrice - pos.trailingStopDistance;
+            const newSL = roundPrice(symbol, exitSide - pos.trailingStopDistance);
             if (!pos.stopLoss || newSL > pos.stopLoss) {
-                pos.stopLoss = Math.round(newSL * 100000) / 100000;
+                pos.stopLoss = newSL;
                 pos.trailingStopActivated = true;
                 slChanged = true;
             }
         } else {
-            const newSL = currentPrice + pos.trailingStopDistance;
+            const newSL = roundPrice(symbol, exitSide + pos.trailingStopDistance);
             if (!pos.stopLoss || newSL < pos.stopLoss) {
-                pos.stopLoss = Math.round(newSL * 100000) / 100000;
+                pos.stopLoss = newSL;
                 pos.trailingStopActivated = true;
                 slChanged = true;
             }
@@ -142,17 +157,23 @@ export async function processTPSL(symbol: string, currentPrice: number) {
         const pos = positionMap.get(id);
         if (!pos || pos.status !== 'OPEN') continue;
 
+        // A stop or target is hit when the price the position would *close* at
+        // reaches it: a long is measured against the bid, a short against the
+        // ask. Testing both sides against one mid price (as before) fires a
+        // long's stop late and a short's stop early, by the spread.
+        const marketPrice = bookClosePrice(pos.symbol, pos.side as Side) ?? currentPrice;
+
         let shouldClose = false;
         let reason = '';
         let closePrice = 0;
 
         // Check Take Profit
         if (pos.takeProfit) {
-            if (pos.side === 'BUY' && currentPrice >= pos.takeProfit) {
+            if (pos.side === 'BUY' && marketPrice >= pos.takeProfit) {
                 shouldClose = true;
                 reason = 'TP';
                 closePrice = pos.takeProfit;
-            } else if (pos.side === 'SELL' && currentPrice <= pos.takeProfit) {
+            } else if (pos.side === 'SELL' && marketPrice <= pos.takeProfit) {
                 shouldClose = true;
                 reason = 'TP';
                 closePrice = pos.takeProfit;
@@ -161,11 +182,11 @@ export async function processTPSL(symbol: string, currentPrice: number) {
 
         // Check Stop Loss
         if (!shouldClose && pos.stopLoss) {
-            if (pos.side === 'BUY' && currentPrice <= pos.stopLoss) {
+            if (pos.side === 'BUY' && marketPrice <= pos.stopLoss) {
                 shouldClose = true;
                 reason = 'SL';
                 closePrice = pos.stopLoss;
-            } else if (pos.side === 'SELL' && currentPrice >= pos.stopLoss) {
+            } else if (pos.side === 'SELL' && marketPrice >= pos.stopLoss) {
                 shouldClose = true;
                 reason = 'SL';
                 closePrice = pos.stopLoss;
@@ -185,9 +206,7 @@ export async function processTPSL(symbol: string, currentPrice: number) {
             pos.closeTime = new Date();
             pos.closePrice = closePrice;
 
-            const mult = pnlMultipliers[pos.symbol] || 1;
-            const diff = pos.side === 'BUY' ? closePrice - pos.entryPrice : pos.entryPrice - closePrice;
-            pos.finalProfit = (diff * pos.volume * mult) - (pos.commission || 0);
+            pos.finalProfit = realizedPnL(pos as any, closePrice) ?? 0;
 
             await pos.save();
 
@@ -203,11 +222,9 @@ export async function processTPSL(symbol: string, currentPrice: number) {
             // Update balance
             const user = await User.findById(pos.userId);
             if (user) {
-                const demoAccount = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-                if (demoAccount) {
-                    demoAccount.balance = (demoAccount.balance ?? 0) + pos.finalProfit;
-                    if (demoAccount.balance < 0) demoAccount.balance = 0;
-                    await user.save();
+                const credited = await creditRealisedPnL(user, pos, pos.finalProfit);
+                if (!credited) {
+                    console.error(`[${reason}] Could not credit P/L for position ${posId}: no matching account.`);
                 }
             }
 
@@ -227,21 +244,33 @@ export async function processTPSL(symbol: string, currentPrice: number) {
 //  PENDING ORDER ACTIVATION ENGINE — activates limit/stop orders
 // ═══════════════════════════════════════════════════════════════
 
-export async function processPendingOrders(symbol: string, currentPrice: number, lowPrice?: number, highPrice?: number) {
+export async function processPendingOrders(
+    symbol: string,
+    currentPrice: number,
+    lowPrice?: number,
+    highPrice?: number,
+    barStart?: number
+) {
     const posIds = symbolIndex.get(symbol);
     if (!posIds || posIds.size === 0) return;
 
     const toActivate: any[] = [];
-
-    // Use candle low/high if provided, otherwise fall back to currentPrice
-    const effectiveLow = lowPrice ?? currentPrice;
-    const effectiveHigh = highPrice ?? currentPrice;
 
     for (const id of posIds) {
         if (activeOperations.has(id)) continue;
 
         const pos = positionMap.get(id);
         if (!pos || pos.status !== 'PENDING') continue;
+
+        // An intraday low/high may only trigger an order that already existed
+        // when that bar opened. Without this check a BUY LIMIT placed below
+        // the market activates instantly whenever the session low happens to
+        // sit under it — a level the market may have touched hours before the
+        // order was ever placed.
+        const placedAt = new Date(pos.createdAt ?? pos.openTime ?? 0).getTime();
+        const rangeIsValid = barStart !== undefined && placedAt <= barStart;
+        const effectiveLow = rangeIsValid ? (lowPrice ?? currentPrice) : currentPrice;
+        const effectiveHigh = rangeIsValid ? (highPrice ?? currentPrice) : currentPrice;
 
         let shouldActivate = false;
 
@@ -288,15 +317,8 @@ export async function processPendingOrders(symbol: string, currentPrice: number,
             pos.openTime = new Date();
             await pos.save();
 
-            // Deduct commission from balance
-            const user = await User.findById(pos.userId);
-            if (user) {
-                const demoAccount = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-                if (demoAccount) {
-                    // Commission is already tracked on the position; no need to deduct from balance here
-                    // (it's handled in PnL calculation via pos.commission)
-                }
-            }
+            // Commission is carried on the position and applied when P/L is
+            // realised, so nothing is deducted from the balance at activation.
 
             // Update in-memory cache
             positionMap.set(posId, pos);
@@ -328,11 +350,7 @@ export async function processPendingOrders(symbol: string, currentPrice: number,
 //  STOP-OUT ENGINE — O(m) per symbol tick where m = users holding symbol
 // ═══════════════════════════════════════════════════════════════
 
-// ── Real Broker Standard Settings ──
-// Margin Call Level: 100% — warning shown, new orders blocked
-const MARGIN_CALL_LEVEL = 100;
-// Stop-Out Level: 50% — broker starts closing positions (IC Markets / Pepperstone standard)
-const STOP_OUT_LEVEL = 50;
+// Margin call (100%) and stop-out (50%) levels live in services/pricing.ts.
 
 export async function processStopOuts(symbol: string, currentPrice: number) {
     const posIds = symbolIndex.get(symbol);
@@ -354,25 +372,45 @@ export async function processStopOuts(symbol: string, currentPrice: number) {
 
 async function processStopOutForUser(userId: string) {
     try {
-        // SAFETY: Verify user account exists and has valid balance from DB before stop-out
         const user = await User.findById(userId);
         if (!user) return;
-        const demoAccount = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-        if (!demoAccount) return;
-        
-        // SAFETY: If DB balance is 0 or undefined, this account was never properly funded.
-        // Do NOT trigger stop-out on an uninitialized account.
-        const dbBalance = demoAccount.balance;
-        if (dbBalance === undefined || dbBalance === null || dbBalance <= 0) {
-            return;
+
+        // Stop-out must be evaluated per account, not only on the demo one —
+        // a LIVE account was previously never checked at all.
+        const openPositions = await Position.find({ userId, status: 'OPEN' });
+        if (!openPositions.length) return;
+
+        const accountIds = Array.from(new Set(
+            openPositions.map((p: any) => p.accountId).filter(Boolean)
+        )) as string[];
+        if (!accountIds.length) {
+            const fallback = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
+            if (fallback) accountIds.push(fallback.cTraderId);
         }
 
-        const acctState = await getAccountState(userId);
-        
-        // SAFETY: Double-check that the balance used in margin calculation matches DB
-        // This prevents stale cache from triggering false stop-outs
-        if (Math.abs(acctState.balance - dbBalance) > 1) {
-            console.log(`⚠️ [STOP-OUT SKIPPED] Balance mismatch for user ${userId}: acctState=${acctState.balance}, DB=${dbBalance}. Skipping.`);
+        for (const acctId of accountIds) {
+            await processStopOutForAccount(userId, user, acctId);
+        }
+    } catch (err) {
+        console.error(`Stop-out check failed for user ${userId}:`, err);
+    }
+}
+
+async function processStopOutForAccount(userId: string, user: any, accountId: string) {
+    try {
+        const account = user.cTraderAccounts.find((a: any) => a.cTraderId === accountId);
+        if (!account) return;
+
+        // An account that was never funded has nothing to liquidate.
+        const dbBalance = account.balance;
+        if (dbBalance === undefined || dbBalance === null || dbBalance <= 0) return;
+
+        const acctState = await getAccountState(userId, accountId);
+
+        // A position we cannot value would make the margin level meaningless,
+        // so never liquidate on a partial picture.
+        if (acctState.unpriced && acctState.unpriced.length) {
+            console.log(`⚠️ [STOP-OUT SKIPPED] ${accountId} holds unpriced symbols: ${acctState.unpriced.join(', ')}`);
             return;
         }
         
@@ -380,8 +418,8 @@ async function processStopOutForUser(userId: string) {
         if (acctState.marginLevel <= STOP_OUT_LEVEL && acctState.margin > 0) {
             console.log(`🚨 [STOP-OUT] Triggered for user ${userId}. Balance: $${acctState.balance.toFixed(2)}, Equity: $${acctState.equity.toFixed(2)}, Margin Level: ${acctState.marginLevel.toFixed(2)}% (threshold: ${STOP_OUT_LEVEL}%)`);
             
-            // Get all open positions for this user, sorted by PnL (close biggest losers first)
-            const userPositions = await Position.find({ userId, status: 'OPEN' });
+            // Only this account's positions may be liquidated for its breach.
+            const userPositions = await Position.find({ userId, status: 'OPEN', accountId });
             
             // Sort by unrealized PnL ascending (worst losers first)
             userPositions.sort((a, b) => calcUnrealizedPnL(a) - calcUnrealizedPnL(b));
@@ -391,7 +429,7 @@ async function processStopOutForUser(userId: string) {
                 if (activeOperations.has(posId)) continue;
 
                 // Re-check margin level after each close — stop closing once above threshold
-                const currentState = await getAccountState(userId);
+                const currentState = await getAccountState(userId, accountId);
                 if (currentState.margin > 0 && currentState.marginLevel > STOP_OUT_LEVEL) {
                     console.log(`✅ [STOP-OUT] Margin level recovered to ${currentState.marginLevel.toFixed(2)}% for user ${userId}. Stopping liquidation.`);
                     break;
@@ -402,11 +440,10 @@ async function processStopOutForUser(userId: string) {
                 try {
                     pos.status = 'CLOSED';
                     pos.closeTime = new Date();
-                    pos.closePrice = priceCache[pos.symbol] || pos.entryPrice;
-                    
-                    const mult = pnlMultipliers[pos.symbol] || 1;
-                    const diff = pos.side === 'BUY' ? pos.closePrice - pos.entryPrice : pos.entryPrice - pos.closePrice;
-                    pos.finalProfit = (diff * pos.volume * mult) - (pos.commission || 0);
+                    // Liquidate at the price the position would really close
+                    // at: a long is sold into the bid, a short bought at the ask.
+                    pos.closePrice = bookClosePrice(pos.symbol, pos.side as Side) ?? pos.entryPrice;
+                    pos.finalProfit = realizedPnL(pos as any, pos.closePrice) ?? 0;
                     
                     await pos.save();
                     
@@ -419,17 +456,11 @@ async function processStopOutForUser(userId: string) {
                     });
                     await tradeHistory.save();
                     
-                    // Update demo account balance with realized PnL
-                    // Re-fetch user to avoid stale data
+                    // Re-fetch to avoid writing a stale balance, then credit
+                    // the account the position actually belongs to.
                     const freshUser = await User.findById(userId);
                     if (freshUser) {
-                        const freshDemoAccount = freshUser.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-                        if (freshDemoAccount) {
-                            freshDemoAccount.balance = (freshDemoAccount.balance ?? 0) + pos.finalProfit;
-                            // Negative Balance Protection
-                            if (freshDemoAccount.balance < 0) freshDemoAccount.balance = 0;
-                            await freshUser.save();
-                        }
+                        await creditRealisedPnL(freshUser, pos, pos.finalProfit);
                     }
 
                     removeFromIndex(posId, pos.symbol);
@@ -468,41 +499,111 @@ export async function runGlobalStopOutCheck() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  FOREX CFD MARGIN ENGINE — Leverage 1:200
+//  SWAP ACCRUAL — overnight financing
+//
+//  Brokers charge or pay financing on every position held through the daily
+//  rollover, and book three days' worth on Wednesday to cover the weekend
+//  value date. The `swap` column already existed in the schema but nothing
+//  ever wrote to it, so holding a position was free.
 // ═══════════════════════════════════════════════════════════════
 
-const LEVERAGE = 200;
+/** Rollover hour in UTC — 21:00 UTC is the market-standard 17:00 New York. */
+const ROLLOVER_HOUR_UTC = 21;
 
-const contractSizes: Record<string, number> = {
-    'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-    'XRP/USDT': 1, 'ADA/USDT': 1, 'DOGE/USDT': 1, 'AVAX/USDT': 1,
-    'LINK/USDT': 1, 'DOT/USDT': 1, 'MATIC/USDT': 1, 'SHIB/USDT': 1,
-    'LTC/USDT': 1, 'TRX/USDT': 1, 'UNI/USDT': 1,
-    'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-    'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-    'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-};
+/** Guards against double-charging if the job runs twice in the same window. */
+let lastRolloverKey: string | null = null;
 
-const pnlMultipliers: Record<string, number> = {
-    'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-    'XRP/USDT': 1, 'ADA/USDT': 1, 'DOGE/USDT': 1, 'AVAX/USDT': 1,
-    'LINK/USDT': 1, 'DOT/USDT': 1, 'MATIC/USDT': 1, 'SHIB/USDT': 1,
-    'LTC/USDT': 1, 'TRX/USDT': 1, 'UNI/USDT': 1,
-    'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-    'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-    'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-};
+const rolloverKey = (d: Date) => `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 
-function calcMarginRequired(symbol: string, volume: number, price: number): number {
-    const cs = contractSizes[symbol] || 1;
-    return (volume * cs * price) / LEVERAGE;
+/**
+ * Charge one night's financing to every open position.
+ * Safe to call repeatedly — it only acts once per rollover date.
+ */
+export async function accrueOvernightSwap(now = new Date()): Promise<number> {
+    if (now.getUTCHours() !== ROLLOVER_HOUR_UTC) return 0;
+
+    const key = rolloverKey(now);
+    if (lastRolloverKey === key) return 0;
+    lastRolloverKey = key;
+
+    let charged = 0;
+    try {
+        const open = await Position.find({ status: 'OPEN' });
+        for (const pos of open as any[]) {
+            const amount = nightlySwap(pos, now);
+            if (amount === undefined) {
+                console.warn(`[Swap] Skipped ${pos.symbol} — no rate available to value it.`);
+                continue;
+            }
+            pos.swap = Number((((pos.swap as number) || 0) + amount).toFixed(2));
+            try {
+                await pos.save();
+                charged++;
+            } catch (e: any) {
+                console.error(`[Swap] Failed to persist swap for ${pos._id}:`, e.message);
+            }
+        }
+        if (charged) {
+            console.log(`💤 [Swap] Applied ${swapMultiplier(now)}x overnight financing to ${charged} position(s).`);
+        }
+    } catch (e: any) {
+        console.error('[Swap] Accrual run failed:', e.message);
+    }
+    return charged;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  MARGIN / P&L — delegated to services/pricing.ts
+//
+//  The contract-size, P/L-multiplier and pip tables that used to live here
+//  contained no forex pairs, so every forex lookup fell through to a default
+//  of 1 and produced margins and P/L 100,000x too small. They are replaced by
+//  config/instruments.ts (per-symbol contract specs) and services/pricing.ts
+//  (bid/ask, currency conversion, margin, P/L, swap).
+// ═══════════════════════════════════════════════════════════════
+
+/** Margin for a position, in account currency. Throws if the symbol is unquoted. */
+function calcMarginRequired(symbol: string, volume: number, _price?: number): number {
+    const m = calcMargin(symbol, volume);
+    if (m === undefined) {
+        throw new Error(`Cannot price margin for ${symbol}: no quote available`);
+    }
+    return m;
+}
+
+/** Floating P/L of an open position; 0 when the symbol cannot be valued. */
 function calcUnrealizedPnL(pos: any): number {
-    const mult = pnlMultipliers[pos.symbol] || 1;
-    const currentPrice = priceCache[pos.symbol] || pos.entryPrice;
-    const diff = pos.side === 'BUY' ? (pos.closePrice || currentPrice) - pos.entryPrice : pos.entryPrice - (pos.closePrice || currentPrice);
-    return (diff * pos.volume * mult) - (pos.commission || 0);
+    return calcFloatingPnL(pos as any) ?? 0;
+}
+
+/**
+ * Resolve the account a position belongs to.
+ *
+ * Every balance update used to look up `accountType === 'DEMO'` and ignore
+ * `pos.accountId`, so a LIVE account's realised P/L was credited to the demo
+ * account and a LIVE account was never stop-out checked at all.
+ */
+function accountForPosition(user: any, pos: any): any | undefined {
+    const accounts = user?.cTraderAccounts || [];
+    if (pos?.accountId) {
+        const exact = accounts.find((a: any) => a.cTraderId === pos.accountId);
+        if (exact) return exact;
+        console.warn(`[Account] Position ${pos._id ?? pos.id} references unknown account ${pos.accountId}`);
+        return undefined;
+    }
+    // Legacy rows carry no accountId; they predate multi-account support.
+    return accounts.find((a: any) => a.accountType === 'DEMO') || accounts[0];
+}
+
+/** Apply realised P/L to the position's own account. */
+async function creditRealisedPnL(user: any, pos: any, amount: number): Promise<boolean> {
+    const account = accountForPosition(user, pos);
+    if (!account) return false;
+    account.balance = (account.balance ?? 0) + amount;
+    if (account.balance < 0) account.balance = 0;
+    user.markModified?.('cTraderAccounts');
+    await user.save();
+    return true;
 }
 
 async function ensureDefaultDemoAccount(userOrId: any): Promise<any> {
@@ -573,7 +674,7 @@ async function ensureDefaultDemoAccount(userOrId: any): Promise<any> {
 
 async function getAccountState(userId: string, accountId?: string, userObj?: any) {
     const user = userObj || await User.findById(userId);
-    if (!user) return { balance: 0, equity: 0, margin: 0, freeMargin: 0, marginLevel: 0, leverage: LEVERAGE, accountId: 'default_demo' };
+    if (!user) return { balance: 0, equity: 0, margin: 0, freeMargin: 0, marginLevel: 0, leverage: 200, accountId: 'default_demo', unpriced: [] as string[] };
     
     let targetAccount = accountId 
         ? user.cTraderAccounts.find((a: any) => a.cTraderId === accountId)
@@ -585,34 +686,35 @@ async function getAccountState(userId: string, accountId?: string, userObj?: any
     
     const balance = targetAccount?.balance ?? 0;
     const openPositions = await Position.find({ userId, status: 'OPEN', accountId: targetAccount?.cTraderId });
-    let totalPnL = 0, totalMargin = 0;
-    for (const pos of openPositions) {
-        totalPnL += calcUnrealizedPnL(pos);
-        totalMargin += calcMarginRequired(pos.symbol, pos.volume, pos.entryPrice);
+    const m = accountMetrics(balance, openPositions as any);
+    if (m.unpriced.length) {
+        console.warn(`[Account] Excluded unpriced positions for user ${userId}: ${m.unpriced.join(', ')}`);
     }
-    const equity = balance + totalPnL;
-    const freeMargin = equity - totalMargin;
-    const marginLevel = totalMargin > 0 ? (equity / totalMargin) * 100 : 9999;
-    return { balance, equity, margin: totalMargin, freeMargin, marginLevel, leverage: LEVERAGE, accountId: targetAccount?.cTraderId };
+    return {
+        balance: m.balance,
+        equity: m.equity,
+        margin: m.margin,
+        freeMargin: m.freeMargin,
+        // A flat account has no margin level to breach; keep the legacy
+        // sentinel rather than Infinity so JSON responses stay numeric.
+        marginLevel: Number.isFinite(m.marginLevel) ? m.marginLevel : 9999,
+        leverage: Math.round(1 / getAverageMarginRate(openPositions as any)),
+        accountId: targetAccount?.cTraderId,
+        unpriced: m.unpriced,
+    };
+}
+
+/** Effective leverage across held positions, for display on the account card. */
+function getAverageMarginRate(positions: any[]): number {
+    if (!positions.length) return getSpec('EUR/USD').marginRate;
+    const total = positions.reduce((sum, p) => sum + getSpec(p.symbol).marginRate, 0);
+    return total / positions.length;
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  PIP VALUE TABLE — used by risk calculator
 // ═══════════════════════════════════════════════════════════════
 
-const pipValues: Record<string, { pipSize: number; pipValuePerLot: number }> = {
-    'BTC/USDT':  { pipSize: 1,      pipValuePerLot: 1 },
-    'ETH/USDT':  { pipSize: 1,      pipValuePerLot: 1 },
-    'BNB/USDT':  { pipSize: 0.1,    pipValuePerLot: 0.1 },
-    'SOL/USDT':  { pipSize: 0.01,   pipValuePerLot: 0.01 },
-    'GOLD':      { pipSize: 0.01,   pipValuePerLot: 1 },
-    'SILVER':    { pipSize: 0.001,  pipValuePerLot: 0.5 },
-    'USOIL':     { pipSize: 0.01,   pipValuePerLot: 10 },
-    'SPX':       { pipSize: 0.01,   pipValuePerLot: 1 },
-    'NDQ':       { pipSize: 0.01,   pipValuePerLot: 1 },
-    'AAPL':      { pipSize: 0.01,   pipValuePerLot: 0.01 },
-    'TSLA':      { pipSize: 0.01,   pipValuePerLot: 0.01 },
-};
 
 // ═══════════════════════════════════════════════════════════════
 //  RISK CALCULATOR
@@ -627,9 +729,12 @@ export const calculateLotSize = async (req: AuthRequest, res: Response) => {
         const acct = await getAccountState(req.user!.id);
         const equity = acct.equity;
         const requestedRiskAmount = equity * (Number(riskPercent) / 100);
-        const pipInfo = pipValues[symbol] || { pipSize: 0.01, pipValuePerLot: 1 };
-        const slPips = Number(stopLossDistance) / pipInfo.pipSize;
-        const riskPerPipPerLot = pipInfo.pipValuePerLot;
+        const spec = getSpec(symbol);
+        const slPips = Number(stopLossDistance) / spec.pipSize;
+        const riskPerPipPerLot = pipValue(symbol, 1);
+        if (riskPerPipPerLot === undefined) {
+            return res.status(400).json({ success: false, message: `No market data for ${symbol}; cannot size the position.` });
+        }
         let idealLotSize = requestedRiskAmount / (slPips * riskPerPipPerLot);
         let marginWarning = false;
         let lotSize = idealLotSize;
@@ -677,9 +782,31 @@ export const getPositions = async (req: AuthRequest, res: Response) => {
         const formatted = positions.map(p => {
             const doc: any = p.toJSON();
             doc.id = doc._id.toString();
+
+            // Ship the contract terms with every position so the client can
+            // recompute P/L on each tick without keeping its own contract-size
+            // and FX tables. Four copies of those tables had drifted across
+            // the app, none of them containing any forex pair.
+            const spec = getSpec(p.symbol);
+            const q = getQuote(p.symbol);
+            doc.contractSize = spec.contractSize;
+            doc.digits = spec.digits;
+            doc.pipSize = spec.pipSize;
+            doc.quoteCurrency = spec.quote;
+            // Rate from the instrument's quote currency into the account
+            // currency; multiply a raw price move by this to get money.
+            doc.quoteRate = rateToAccount(spec.quote) ?? null;
+            doc.pipValue = pipValue(p.symbol, p.volume) ?? null;
+            doc.marginUsed = calcMargin(p.symbol, p.volume) ?? null;
+
             if (doc.status === 'OPEN') {
                 doc.unrealizedPnL = calcUnrealizedPnL(p);
-                doc.currentPrice = priceCache[p.symbol] || p.entryPrice;
+                doc.currentPrice = getMid(p.symbol) ?? p.entryPrice;
+                // The side the position would close at — what the P&L is
+                // actually marked against.
+                doc.marketPrice = bookClosePrice(p.symbol, p.side as Side) ?? p.entryPrice;
+                doc.bid = q?.bid ?? null;
+                doc.ask = q?.ask ?? null;
             }
             return doc;
         });
@@ -768,41 +895,47 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             }
 
             const isPending = orderType !== 'MARKET';
-            const serverPrice = priceCache[symbol];
-            let rawPrice = serverPrice > 0 ? serverPrice : currentPrice;
+            const spec = getSpec(symbol);
 
-            if (rawPrice <= 0 && isPending) rawPrice = Number(targetPrice);
-
-            if (rawPrice <= 0) {
-                return res.status(400).json({ success: false, message: 'Invalid entry price. Please wait for market data.' });
-            }
-
-            // SIMULATE BROKER SPREAD & SLIPPAGE (Raw/Zero Account style)
-            let entryP = rawPrice;
-            if (!isPending) {
-                const spreadPercent = 0.00002; // 0.002% spread (e.g., ~$0.04 on Gold, ~$1.6 on BTC)
-                const slippagePercent = Math.random() * 0.00002; // very tight slippage
-                if (side === 'BUY') {
-                    entryP = rawPrice * (1 + (spreadPercent / 2) + slippagePercent);
-                } else {
-                    entryP = rawPrice * (1 - (spreadPercent / 2) - slippagePercent);
+            // Fill on the correct side of the book: a market BUY pays the ask,
+            // a market SELL receives the bid. The old code took a single mid
+            // price and nudged it by 0.002% of price as a stand-in spread,
+            // which is not how spreads work — that is 0.2 pip on EUR/USD but
+            // $0.047 on gold — and it charged nothing on the exit leg.
+            let entryP: number;
+            if (isPending) {
+                entryP = roundPrice(symbol, Number(targetPrice));
+                if (!(entryP > 0)) {
+                    return res.status(400).json({ success: false, message: 'A pending order needs a valid target price.' });
                 }
-                // Round to sensible decimals (5 for forex/crypto standard)
-                entryP = Number(entryP.toFixed(5));
             } else {
-                entryP = Number(targetPrice);
+                const fill = bookOpenPrice(symbol, side as Side);
+                if (fill === undefined || !(fill > 0)) {
+                    return res.status(400).json({ success: false, message: 'No live quote for this symbol. Please wait for market data.' });
+                }
+                entryP = roundPrice(symbol, fill);
             }
 
-            // COMMISSION
-            const COMMISSION_PER_LOT = 7; // $7 round turn
-            const vol = Number(volume);
-            const totalCommission = vol * COMMISSION_PER_LOT;
+            // ═══ VOLUME & COST ═══
+            const requestedVol = Number(volume);
+            if (!(requestedVol > 0)) {
+                return res.status(400).json({ success: false, message: 'Volume must be greater than zero.' });
+            }
+            if (requestedVol < spec.minVolume) {
+                return res.status(400).json({ success: false, message: `Minimum volume for ${symbol} is ${spec.minVolume} lots.` });
+            }
+            if (requestedVol > spec.maxVolume) {
+                return res.status(400).json({ success: false, message: `Maximum volume for ${symbol} is ${spec.maxVolume} lots.` });
+            }
+            const vol = normaliseVolume(symbol, requestedVol);
+            const totalCommission = commissionFor(symbol, vol);
 
-            // ═══ FOREX CFD MARGIN CHECK ═══
-            if (vol < 0.01) return res.status(400).json({ success: false, message: 'Minimum volume is 0.01 lots.' });
-            if (vol > 100) return res.status(400).json({ success: false, message: 'Maximum volume is 100 lots.' });
-
-            const requiredMargin = calcMarginRequired(symbol, vol, entryP);
+            let requiredMargin: number;
+            try {
+                requiredMargin = calcMarginRequired(symbol, vol);
+            } catch {
+                return res.status(400).json({ success: false, message: `Cannot price margin for ${symbol} yet. Please wait for market data.` });
+            }
             const acct = await getAccountState(userId, accountId, user);
 
             // Block if free margin is already negative or zero
@@ -816,7 +949,11 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             // Check if free margin is enough for this order + commission
             const totalCost = requiredMargin + totalCommission;
             if (totalCost > acct.freeMargin) {
-                const maxVol = Math.floor(((acct.freeMargin - COMMISSION_PER_LOT * 0.01) * LEVERAGE / ((contractSizes[symbol] || 1) * entryP)) * 100) / 100;
+                // Largest volume the remaining free margin can carry.
+                const marginForOneLot = calcMargin(symbol, 1) ?? Infinity;
+                const commissionForOneLot = commissionFor(symbol, 1);
+                const maxVol = normaliseVolume(symbol, Math.max(0,
+                    acct.freeMargin / (marginForOneLot + commissionForOneLot)));
                 return res.status(400).json({ 
                     success: false, 
                     message: `Insufficient margin. Required: $${totalCost.toFixed(2)} (margin $${requiredMargin.toFixed(2)} + commission $${totalCommission.toFixed(2)}), Available: $${acct.freeMargin.toFixed(2)}. Max volume: ${Math.max(0, maxVol)} lots.`
@@ -854,9 +991,9 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
 
             let initialSL = stopLoss;
             if (trailingStopDistance > 0 && !initialSL) {
-                initialSL = side === 'BUY' 
-                    ? Math.round((entryP - trailingStopDistance) * 100000) / 100000
-                    : Math.round((entryP + trailingStopDistance) * 100000) / 100000;
+                initialSL = roundPrice(symbol, side === 'BUY'
+                    ? entryP - trailingStopDistance
+                    : entryP + trailingStopDistance);
             }
 
             const position = new Position({
@@ -881,7 +1018,7 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
                 userId: user._id,
                 positionId: position._id,
                 action: 'OPEN',
-                details: `Opened ${side} ${vol} lot(s) of ${symbol} at ${entryP} | Margin: $${requiredMargin.toFixed(2)} | Leverage: 1:${LEVERAGE}`,
+                details: `Opened ${side} ${vol} lot(s) of ${symbol} at ${entryP} | Margin: $${requiredMargin.toFixed(2)} | Leverage: 1:${Math.round(1 / getSpec(symbol).marginRate)}`,
                 priceAtAction: entryP
             });
             await tradeHistory.save();
@@ -972,19 +1109,15 @@ export const closePosition = async (req: AuthRequest, res: Response) => {
                 return res.status(400).json({ success: false, message: 'Market data not available to close position. Please try again.' });
             }
 
-            // SIMULATE BROKER SPREAD & SLIPPAGE ON EXIT (Raw/Zero Account style)
-            const spreadPercent = 0.00002;
-            const slippagePercent = Math.random() * 0.00002;
-            if (position.side === 'BUY') {
-                // Closing a BUY is a SELL operation
-                closeP = closeP * (1 - (spreadPercent / 2) - slippagePercent);
-            } else {
-                // Closing a SELL is a BUY operation
-                closeP = closeP * (1 + (spreadPercent / 2) + slippagePercent);
-            }
-            closeP = Number(closeP.toFixed(5));
+            // Close on the real side of the book: a long is sold into the bid,
+            // a short is bought back at the ask. The spread is therefore
+            // charged on the exit leg too — the old code applied a flat
+            // 0.002% of price as a stand-in, which is not how spreads work
+            // (it priced EUR/USD at 0.2 pip but GOLD at $0.047) and only ever
+            // charged half a spread per round trip.
+            const bookExit = bookClosePrice(position.symbol, position.side as Side);
+            closeP = roundPrice(position.symbol, bookExit ?? closeP);
 
-            const mult = pnlMultipliers[position.symbol] || 1;
             const closeVol = volume ? Number(volume) : position.volume;
             
             if (closeVol <= 0 || closeVol > position.volume) {
@@ -1001,8 +1134,10 @@ export const closePosition = async (req: AuthRequest, res: Response) => {
                 position.volume = Math.round((position.volume - closeVol) * 100) / 100;
                 position.commission = Math.round(((position.commission || 0) - closedCommission) * 100) / 100;
                 
-                const diff = position.side === 'BUY' ? closeP - position.entryPrice : position.entryPrice - closeP;
-                const finalProfit = (diff * closeVol * mult) - closedCommission;
+                const finalProfit = realizedPnL(
+                    { ...position, volume: closeVol, commission: closedCommission } as any,
+                    closeP
+                ) ?? 0;
                 
                 await position.save();
                 
@@ -1041,13 +1176,7 @@ export const closePosition = async (req: AuthRequest, res: Response) => {
                 
                 // Update demo account balance
                 const user = await User.findById(req.user!.id);
-                if (user) {
-                    const demoAccount = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-                    if (demoAccount) {
-                        demoAccount.balance = (demoAccount.balance ?? 0) + finalProfit;
-                        await user.save();
-                    }
-                }
+                if (user) await creditRealisedPnL(user, position, finalProfit);
                 
                 const doc = closedPart.toJSON();
                 doc.id = doc._id;
@@ -1075,20 +1204,13 @@ export const closePosition = async (req: AuthRequest, res: Response) => {
             position.closeTime = new Date();
             position.closePrice = closeP;
             
-            const diff = position.side === 'BUY' ? closeP - position.entryPrice : position.entryPrice - closeP;
-            position.finalProfit = (diff * position.volume * mult) - (position.commission || 0);
+            position.finalProfit = realizedPnL(position as any, closeP) ?? 0;
             
             await position.save();
 
-            // Update demo account balance with realized PnL
+            // Credit realised P/L to the account the position belongs to.
             const user = await User.findById(req.user!.id);
-            if (user) {
-                const demoAccount = user.cTraderAccounts.find((a: any) => a.accountType === 'DEMO');
-                if (demoAccount) {
-                    demoAccount.balance = (demoAccount.balance ?? 0) + position.finalProfit;
-                    await user.save();
-                }
-            }
+            if (user) await creditRealisedPnL(user, position, position.finalProfit);
 
             const tradeHistory = new TradeHistory({
                 userId: req.user!.id,

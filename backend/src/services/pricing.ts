@@ -79,16 +79,20 @@ export function getQuote(symbol: string): Quote | undefined {
     return quotes.get(symbol);
 }
 
-/** Mid price, or undefined when the symbol has never been quoted. */
+/**
+ * Mid price, or undefined when the symbol has never been quoted.
+ * Rounded to the instrument's precision so float noise from averaging the two
+ * sides never reaches a client or a saved cache file.
+ */
 export function getMid(symbol: string): number | undefined {
     const q = quotes.get(symbol);
-    return q ? (q.bid + q.ask) / 2 : undefined;
+    return q ? roundPrice(symbol, (q.bid + q.ask) / 2) : undefined;
 }
 
 /** Snapshot of every known mid price — for the /market/prices response. */
 export function getAllMids(): Record<string, number> {
     const out: Record<string, number> = {};
-    for (const [symbol, q] of quotes) out[symbol] = (q.bid + q.ask) / 2;
+    for (const symbol of quotes.keys()) out[symbol] = getMid(symbol)!;
     return out;
 }
 

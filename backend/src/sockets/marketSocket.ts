@@ -1,9 +1,11 @@
 import { Server } from 'socket.io';
 import axios from 'axios';
 import YahooFinance from 'yahoo-finance2';
-import { processTrailingStops, processTPSL, processStopOuts, runGlobalStopOutCheck, processPendingOrders } from '../controllers/tradeController';
+import { processTrailingStops, processTPSL, processStopOuts, runGlobalStopOutCheck, processPendingOrders, accrueOvernightSwap } from '../controllers/tradeController';
 import fs from 'fs';
 import path from 'path';
+import { setMidPrice, setQuote, getMid, getQuote, getAllMids, getSpreadPips } from '../services/pricing';
+import { roundPrice } from '../config/instruments';
 
 const yahooFinance = new YahooFinance();
 const BINANCE_API_URL = 'https://api.binance.com/api/v3';
@@ -130,8 +132,55 @@ export const savePriceCache = (cache: Record<string, number>) => {
     }
 };
 
-// In-memory last known price cache initialized with fallback and saved values
+/**
+ * Legacy mid-price map, kept for display-only consumers (market prices
+ * endpoint, AI context). The authoritative two-sided quotes live in
+ * services/pricing.ts — anything that executes, values a position or checks
+ * margin must read from there, because a single mid price cannot express
+ * which side of the book a fill happens on.
+ */
 export const priceCache: Record<string, number> = loadPriceCache();
+
+/** Record a one-sided feed price: seeds the quote store and the legacy map. */
+const ingestMid = (symbol: string, mid: number) => {
+    if (!(mid > 0)) return;
+    setMidPrice(symbol, mid);
+    priceCache[symbol] = getMid(symbol)!;
+};
+
+/** Record a genuine two-sided quote (a real broker feed). */
+export const ingestQuote = (symbol: string, bid: number, ask: number) => {
+    if (!(bid > 0) || !(ask > 0)) return;
+    setQuote(symbol, bid, ask);
+    priceCache[symbol] = getMid(symbol)!;
+};
+
+/** Seed the quote store from whatever the cache file / fallbacks gave us. */
+for (const [symbol, price] of Object.entries(priceCache)) {
+    try { ingestMid(symbol, price); } catch { /* skip unusable seed */ }
+}
+
+/**
+ * Synthetic tick drift. A real broker never invents prices, so this is off by
+ * default: when enabled it only animates the display feed and is explicitly
+ * excluded from the stop-loss / take-profit / stop-out path, which must only
+ * ever act on prices the market actually printed.
+ */
+const SYNTHETIC_TICKS = process.env.SYNTHETIC_TICKS === 'true';
+
+/** Payload every price emit uses, so clients get the spread they display. */
+const quotePayload = (symbol: string) => {
+    const q = getQuote(symbol);
+    if (!q) return null;
+    return {
+        symbol,
+        price: roundPrice(symbol, (q.bid + q.ask) / 2),
+        bid: q.bid,
+        ask: q.ask,
+        spread: getSpreadPips(symbol),
+        timestamp: new Date(q.ts),
+    };
+};
 
 // Fetch live price from Yahoo Finance for traditional assets (or crypto fallback)
 const fetchYahooPrice = async (symbol: string): Promise<number | null> => {
@@ -223,13 +272,8 @@ export const setupMarketSockets = (io: Server) => {
                 activeSubscriptions.add(symbol);
 
                 // If we already have a cached price, send it immediately
-                if (priceCache[symbol]) {
-                    socket.emit('priceUpdate', {
-                        symbol,
-                        price: parseFloat(priceCache[symbol].toFixed(4)),
-                        timestamp: new Date()
-                    });
-                }
+                const cached = quotePayload(symbol);
+                if (cached) socket.emit('priceUpdate', cached);
                 
                 // If this is a new symbol (no cached price), fetch immediately
                 if (isNew || !priceCache[symbol]) {
@@ -237,13 +281,9 @@ export const setupMarketSockets = (io: Server) => {
                         const price = await fetchSinglePrice(symbol);
                         if (price && price > 0) {
                             basePriceCache[symbol] = price;
-                            priceCache[symbol] = price;
-                            // Emit to all clients subscribed to this symbol
-                            io.to(symbol).emit('priceUpdate', {
-                                symbol,
-                                price: parseFloat(price.toFixed(4)),
-                                timestamp: new Date()
-                            });
+                            ingestMid(symbol, price);
+                            const payload = quotePayload(symbol);
+                            if (payload) io.to(symbol).emit('priceUpdate', payload);
                             console.log(`📊 [Market] Fetched initial price for ${symbol}: ${price}`);
                         }
                     } catch (e) {
@@ -303,7 +343,7 @@ export const setupMarketSockets = (io: Server) => {
                         const bSymbol = symbol.replace(/[\/-]/g, '');
                         if (binancePrices[bSymbol] && binancePrices[bSymbol] > 0) {
                             basePriceCache[symbol] = binancePrices[bSymbol];
-                            priceCache[symbol] = binancePrices[bSymbol];
+                            ingestMid(symbol, binancePrices[bSymbol]);
                         }
                     }
                 }
@@ -325,7 +365,7 @@ export const setupMarketSockets = (io: Server) => {
                             const originalSymbol = traditionalSymbols.find(s => getYahooTicker(s) === quote.symbol);
                             if (originalSymbol) {
                                 basePriceCache[originalSymbol] = price;
-                                priceCache[originalSymbol] = price;
+                                ingestMid(originalSymbol, price);
                             }
                         }
                     }
@@ -336,7 +376,7 @@ export const setupMarketSockets = (io: Server) => {
         }
 
         // 3. Candle Low/High for pending order triggering
-        const candleLowHigh: Record<string, { low: number; high: number }> = {};
+        const candleLowHigh: Record<string, { low: number; high: number; barStart: number }> = {};
         if (cryptoSymbols.length > 0) {
             const baseUrl = BINANCE_ENDPOINTS[binanceEndpointIndex];
             for (const symbol of cryptoSymbols) {
@@ -349,7 +389,8 @@ export const setupMarketSockets = (io: Server) => {
                     if (res.data && res.data[0]) {
                         candleLowHigh[symbol] = {
                             low: parseFloat(res.data[0][3]),
-                            high: parseFloat(res.data[0][2])
+                            high: parseFloat(res.data[0][2]),
+                            barStart: Number(res.data[0][0]),
                         };
                     }
                 } catch {}
@@ -364,56 +405,80 @@ export const setupMarketSockets = (io: Server) => {
                 const quote = await yahooFinance.quoteSummary(ticker, { modules: ['price'] });
                 const priceData = quote.price as any;
                 if (priceData?.regularMarketDayLow && priceData?.regularMarketDayHigh) {
+                    // This is the whole trading session's range, so it is only
+                    // a legitimate trigger for orders placed before the
+                    // session opened. Stamped accordingly.
+                    const openMs = priceData.regularMarketTime
+                        ? new Date(priceData.regularMarketTime).setUTCHours(0, 0, 0, 0)
+                        : new Date().setUTCHours(0, 0, 0, 0);
                     candleLowHigh[symbol] = {
                         low: priceData.regularMarketDayLow,
-                        high: priceData.regularMarketDayHigh
+                        high: priceData.regularMarketDayHigh,
+                        barStart: openMs,
                     };
                 }
             } catch {}
         }
 
+        // Run the execution engines against real, market-printed prices only.
         for (const symbol of symbols) {
-            if (priceCache[symbol]) {
-                const lh = candleLowHigh[symbol];
-                processPendingOrders(
-                    symbol,
-                    priceCache[symbol],
-                    lh?.low,
-                    lh?.high
-                ).catch(() => {});
-            }
+            const mid = getMid(symbol);
+            if (mid === undefined) continue;
+
+            // Candle low/high is only a valid trigger source for the bar the
+            // order has actually lived through. `regularMarketDayLow/High` is
+            // the whole session's range, so passing it here would activate a
+            // pending order against a level the market touched hours before
+            // the order existed. Intraday extremes are therefore only used
+            // when they are fresher than the order — processPendingOrders
+            // enforces that via the barStart timestamp.
+            const lh = candleLowHigh[symbol];
+            processPendingOrders(symbol, mid, lh?.low, lh?.high, lh?.barStart).catch(() => {});
+            processTrailingStops(symbol, mid);
+            processTPSL(symbol, mid).catch(() => {});
+            processStopOuts(symbol, mid).catch(() => {});
         }
-        savePriceCache(priceCache);
+        savePriceCache(getAllMids());
     }, 10000);
 
-    // Fast tick simulation loop (every 1s)
+    // Fast loop (every 1s).
+    //
+    // This used to invent a price with Math.random(), write it over the price
+    // cache and then run trailing stops, take-profit/stop-loss and stop-outs
+    // against it. Because the invented price replaced the cached one on every
+    // pass, it random-walked away from the real market between the 10s fetches
+    // — so a client's position could be stopped out by a move that never
+    // happened. Execution now runs only in the real-data loop above.
+    //
+    // With SYNTHETIC_TICKS enabled the drift returns for demo purposes, but it
+    // is emitted to clients only and never reaches the execution engines or
+    // the quote store used to value positions.
     setInterval(() => {
         const symbols = Array.from(activeSubscriptions);
         for (const symbol of symbols) {
-            let basePrice = priceCache[symbol] || basePriceCache[symbol];
-            if (basePrice) {
-                const noise = basePrice * 0.0002;
-                const change = (Math.random() - 0.5) * noise;
-                const tickPrice = basePrice + change;
-                
-                priceCache[symbol] = tickPrice;
-                
+            if (SYNTHETIC_TICKS) {
+                const base = getMid(symbol) ?? basePriceCache[symbol];
+                if (!base) continue;
+                const drift = (Math.random() - 0.5) * base * 0.0002;
+                const spec = getSpreadPips(symbol) ?? 0;
+                const mid = roundPrice(symbol, base + drift);
                 io.to(symbol).emit('priceUpdate', {
-                    symbol,
-                    price: parseFloat(tickPrice.toFixed(4)),
-                    timestamp: new Date()
+                    symbol, price: mid, bid: mid, ask: mid,
+                    spread: spec, synthetic: true, timestamp: new Date(),
                 });
-
-                processTrailingStops(symbol, tickPrice);
-                processPendingOrders(symbol, tickPrice).catch(() => {});
-                processTPSL(symbol, tickPrice).catch(() => {});
-                processStopOuts(symbol, tickPrice).catch(() => {});
+            } else {
+                const payload = quotePayload(symbol);
+                if (payload) io.to(symbol).emit('priceUpdate', payload);
             }
         }
     }, 1000);
 
-    // Global stop-out check every 5 seconds — catches margin violations
-    // even for symbols no one is actively viewing
+    // Overnight financing. Checked every minute; accrueOvernightSwap only
+    // acts inside the rollover hour and only once per date.
+    setInterval(() => { accrueOvernightSwap().catch(() => {}); }, 60_000);
+
+    // Global stop-out check — catches margin violations even for symbols
+    // no one is actively viewing
     setInterval(async () => {
         try {
             await runGlobalStopOutCheck();
