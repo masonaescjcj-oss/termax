@@ -77,6 +77,14 @@ export interface MarketFeed {
      */
     getCandles(symbol: string, timeframe: Timeframe, limit: number): Promise<Candle[] | null>;
 
+    /**
+     * Historical candles inside [fromMs, toMs), oldest first — one page, the
+     * caller paginates. Optional: only feeds with real history implement it
+     * (Binance klines, cTrader trendbars); the backfill service skips feeds
+     * without it.
+     */
+    getCandlesRange?(symbol: string, timeframe: Timeframe, fromMs: number, toMs: number): Promise<Candle[] | null>;
+
     status(): FeedStatus;
 }
 

@@ -384,6 +384,44 @@ export class CTraderFeed implements MarketFeed {
         return candles.slice(-limit);
     }
 
+    async getCandlesRange(symbol: string, timeframe: Timeframe, fromMs: number, toMs: number): Promise<Candle[] | null> {
+        await this.loadSymbols();
+        const mapped = this.byOurSymbol.get(symbol);
+        if (!mapped) return null;
+        const period = TRENDBAR_PERIOD[timeframe];
+        if (!period) return null;
+
+        let res: any;
+        try {
+            res = await this.client.withHistoricalBudget(() =>
+                this.client.send('ProtoOAGetTrendbarsReq', {
+                    symbolId: mapped.id,
+                    period,
+                    fromTimestamp: Math.floor(fromMs),
+                    toTimestamp: Math.floor(toMs),
+                })
+            );
+        } catch (e: any) {
+            console.warn(`[cTrader] Trendbar range for ${symbol} ${timeframe} failed:`, e.message);
+            return null;
+        }
+
+        const bars: any[] = res?.trendbar ?? [];
+        const candles: Candle[] = bars.map((b: any) => {
+            const low = Number(b.low) / TRENDBAR_SCALE;
+            return {
+                time: Number(b.utcTimestampInMinutes) * 60_000,
+                open: low + Number(b.deltaOpen ?? 0) / TRENDBAR_SCALE,
+                high: low + Number(b.deltaHigh ?? 0) / TRENDBAR_SCALE,
+                low,
+                close: low + Number(b.deltaClose ?? 0) / TRENDBAR_SCALE,
+                volume: Number(b.volume ?? 0),
+            };
+        });
+        candles.sort((a, b) => a.time - b.time);
+        return candles;
+    }
+
     status(): FeedStatus {
         return {
             name: this.name,

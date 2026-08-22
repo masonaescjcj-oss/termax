@@ -255,6 +255,40 @@ export class BinanceFeed implements MarketFeed {
         return null;
     }
 
+    async getCandlesRange(symbol: string, timeframe: Timeframe, fromMs: number, toMs: number): Promise<Candle[] | null> {
+        if (!this.supports(symbol)) return null;
+        const interval = KLINE_INTERVAL[timeframe];
+        if (!interval) return null;
+
+        const bSymbol = toBinance(symbol);
+        for (let i = 0; i < REST_MIRRORS.length; i++) {
+            const base = REST_MIRRORS[(this.mirrorIndex + i) % REST_MIRRORS.length];
+            try {
+                const res = await axios.get(`${base}/klines`, {
+                    params: {
+                        symbol: bSymbol, interval,
+                        startTime: Math.floor(fromMs),
+                        endTime: Math.floor(toMs) - 1,
+                        limit: 1000,
+                    },
+                    timeout: 8000,
+                });
+                if (Array.isArray(res.data)) {
+                    this.mirrorIndex = (this.mirrorIndex + i) % REST_MIRRORS.length;
+                    return res.data.map((k: any[]) => ({
+                        time: Number(k[0]),
+                        open: parseFloat(k[1]),
+                        high: parseFloat(k[2]),
+                        low: parseFloat(k[3]),
+                        close: parseFloat(k[4]),
+                        volume: parseFloat(k[5]),
+                    }));
+                }
+            } catch { /* try the next mirror */ }
+        }
+        return null;
+    }
+
     status(): FeedStatus {
         return {
             name: this.name,

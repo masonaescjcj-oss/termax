@@ -148,6 +148,25 @@ export class FeedRouter {
         return null;
     }
 
+    /**
+     * One page of historical candles in [fromMs, toMs) from the first feed
+     * that has real history for the symbol. Null when none does.
+     */
+    async getCandlesRange(symbol: string, timeframe: Timeframe, fromMs: number, toMs: number): Promise<Candle[] | null> {
+        const first = this.pick(symbol);
+        const order = [first, ...this.feeds.filter(f => f !== first)].filter(Boolean) as MarketFeed[];
+        for (const feed of order) {
+            if (!feed.supports(symbol) || !feed.getCandlesRange) continue;
+            try {
+                const candles = await feed.getCandlesRange(symbol, timeframe, fromMs, toMs);
+                if (candles) return candles;
+            } catch (e: any) {
+                console.warn(`[Feed] ${feed.name} candle range for ${symbol} failed:`, e.message);
+            }
+        }
+        return null;
+    }
+
     /** Which provider is serving a symbol — surfaced in the status endpoint. */
     providerFor(symbol: string): string | null {
         return this.routed.get(symbol)?.name ?? this.pick(symbol)?.name ?? null;
