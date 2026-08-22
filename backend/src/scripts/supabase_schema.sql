@@ -49,11 +49,22 @@ CREATE TABLE public.positions (
     swap NUMERIC DEFAULT 0,
     commission NUMERIC DEFAULT 0,
     advanced_rules JSONB DEFAULT '[]'::jsonb,
+    -- Which engine owns this position. SIMULATED rows are matched by our own
+    -- engine; CTRADER rows mirror a position that lives at the broker, where
+    -- the broker is the book of record and this row is only a local copy for
+    -- history and the UI.
+    venue VARCHAR(20) NOT NULL DEFAULT 'SIMULATED' CHECK (venue IN ('SIMULATED', 'CTRADER')),
+    -- The broker's own position/order id, for reconciliation.
+    broker_position_id VARCHAR(64),
     open_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     close_time TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+-- One local mirror per broker position, so reconciliation cannot duplicate.
+CREATE UNIQUE INDEX idx_positions_broker_ref
+    ON public.positions (account_id, broker_position_id)
+    WHERE broker_position_id IS NOT NULL;
 
 -- 3. BROKERS TABLE
 CREATE TABLE public.brokers (

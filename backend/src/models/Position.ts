@@ -57,6 +57,8 @@ export default class Position {
             }
             if (query.accountId) q = q.eq('account_id', query.accountId);
             if (query.symbol) q = q.eq('symbol', query.symbol);
+            if (query.venue) q = q.eq('venue', query.venue);
+            if (query.brokerPositionId) q = q.eq('broker_position_id', query.brokerPositionId);
 
             const { data, error } = await q;
             if (error) throw new Error(error.message);
@@ -73,6 +75,12 @@ export default class Position {
             if (query.id) q = q.eq('id', query.id);
             if (query.userId) q = q.eq('user_id', query.userId);
             if (query.status) q = q.eq('status', query.status);
+            if (query.accountId) q = q.eq('account_id', query.accountId);
+            // Needed to resolve a broker position back to its local mirror.
+            // Without these two filters the query silently ignored them and
+            // could return an unrelated row.
+            if (query.brokerPositionId) q = q.eq('broker_position_id', query.brokerPositionId);
+            if (query.venue) q = q.eq('venue', query.venue);
 
             const { data, error } = await q.maybeSingle();
             if (error) throw new Error(error.message);

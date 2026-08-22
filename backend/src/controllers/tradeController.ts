@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
-import { getAuthUrl, getAccessToken, setToken, getToken } from '../services/ctraderService';
+import {
+    getAuthUrl, getAccessToken, consumeState, isConfigured as ctraderConfigured,
+} from '../services/ctraderService';
+import { CTraderClient } from '../services/ctrader/connection';
 import { priceCache, fetchSinglePrice } from '../sockets/marketSocket';
 import {
     getSpec, roundPrice, normaliseVolume,
@@ -16,44 +19,137 @@ import TradeHistory from '../models/TradeHistory';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
+import { venueKindForAccount } from '../services/venues';
+import {
+    findAccount, openLiveOrder, closeLivePosition, modifyLivePosition, getLivePositions,
+} from './liveTrade';
 
-export const getAuth = (req: Request, res: Response) => {
-    const url = getAuthUrl();
-    res.status(200).json({ success: true, url });
+/**
+ * Start the broker-link flow. Requires an authenticated user: the consent URL
+ * embeds a signed, single-use state parameter that ties the eventual callback
+ * back to them. Previously this route was unauthenticated and issued no state,
+ * so /callback accepted a code from anyone with no way to know whose it was.
+ */
+export const getAuth = (req: AuthRequest, res: Response) => {
+    if (!ctraderConfigured()) {
+        return res.status(503).json({
+            success: false,
+            message: 'cTrader is not configured on this server. Set CTRADER_CLIENT_ID and CTRADER_CLIENT_SECRET.',
+        });
+    }
+    res.status(200).json({ success: true, url: getAuthUrl(req.user!.id) });
 };
 
+/** Render the small page the broker redirects the user's browser back to. */
+const callbackPage = (heading: string, body: string, colour: string) => `
+    <html>
+    <head><meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:system-ui,sans-serif;background:#0B0E14;color:#E6E8EB;text-align:center;padding:48px 20px}
+    h2{color:${colour};margin-bottom:12px}p{color:#9BA1A6;line-height:1.6}</style></head>
+    <body><h2>${heading}</h2><p>${body}</p></body>
+    </html>`;
+
+/**
+ * Broker redirect target. Verifies the state parameter, exchanges the code,
+ * discovers the trading accounts behind the token, and stores each of them on
+ * the user with the tokens needed to trade it.
+ */
 export const authCallback = async (req: Request, res: Response) => {
+    const { code, state } = req.query;
+
+    const verified = consumeState(state as string | undefined);
+    if (!verified) {
+        // Covers a forged, expired or already-redeemed state.
+        return res.status(400).send(callbackPage(
+            'This link could not be verified',
+            'Start the connection again from the app. Links expire after ten minutes and can only be used once.',
+            '#F23645'
+        ));
+    }
+
+    if (!code) {
+        return res.status(400).send(callbackPage(
+            'No authorisation code received',
+            'cTrader did not return an authorisation code. Please try connecting again.',
+            '#F23645'
+        ));
+    }
+
     try {
-        const { code } = req.query;
-        if (!code) {
-            return res.status(400).send('Authorization code missing.');
+        const tokens = await getAccessToken(code as string);
+
+        // Which trading accounts this token can act on.
+        let brokerAccounts: any[] = [];
+        try {
+            brokerAccounts = await CTraderClient.listAccounts(tokens.accessToken);
+        } catch (e: any) {
+            console.warn('[cTrader OAuth] Could not list accounts for the new token:', e.message);
         }
 
-        const tokenData = await getAccessToken(code as string);
-        setToken(tokenData.accessToken);
-        
-        // MOCK: Fetching user profile from cTrader API
-        const cTraderProfile = {
-            cTraderId: 'ct_' + Math.random().toString(36).substr(2, 9),
-            email: 'user@example.com',
-            aliases: ['ProTrader_99']
-        };
+        const user = await User.findById(verified.userId);
+        if (!user) {
+            return res.status(404).send(callbackPage(
+                'Account not found',
+                'Your user account could not be found. Please sign in again and retry.',
+                '#F23645'
+            ));
+        }
 
-        // MOCK: Saving user to our MongoDB database
-        console.log(`✅ [MongoDB] Saved/Updated user profile for cTrader ID: ${cTraderProfile.cTraderId}`);
+        user.cTraderAccounts = user.cTraderAccounts || [];
+        let linked = 0;
 
-        res.status(200).send(`
-            <html>
-            <head><style>body { font-family: sans-serif; background: #12161F; color: #FFF; text-align: center; padding: 50px; }</style></head>
-            <body>
-            <h2 style="color: #089981;">Successfully connected to cTrader!</h2>
-            <p>Your profile has been saved to the database.</p>
-            <p>You can now close this window and return to the app.</p>
-            </body>
-            </html>
-        `);
+        for (const acct of brokerAccounts) {
+            const ctid = acct?.ctidTraderAccountId ?? acct?.traderLogin;
+            if (!ctid) continue;
+
+            const isLive = acct?.live === true || String(acct?.accountType).toUpperCase() === 'LIVE';
+            const id = `ctrader_${ctid}`;
+            const existing = user.cTraderAccounts.find((a: any) => a.cTraderId === id);
+
+            const record = {
+                cTraderId: id,
+                ctidTraderAccountId: Number(ctid),
+                accessToken: tokens.accessToken,
+                refreshToken: tokens.refreshToken,
+                expiresAt: tokens.expiresAt,
+                accountType: isLive ? 'LIVE' : 'DEMO',
+                broker: acct?.brokerTitle ?? acct?.brokerName ?? 'cTrader',
+                balance: existing?.balance ?? 0,
+                currency: acct?.depositCurrency ?? 'USD',
+                leverage: existing?.leverage ?? '1:200',
+                connectedAt: new Date().toISOString(),
+            };
+
+            if (existing) Object.assign(existing, record);
+            else user.cTraderAccounts.push(record);
+            linked++;
+        }
+
+        if (!linked) {
+            return res.status(200).send(callbackPage(
+                'Connected, but no trading account was found',
+                'cTrader authorised the app but reported no trading accounts. Check that your cTrader ID has an account with this broker.',
+                '#FF9800'
+            ));
+        }
+
+        user.markModified?.('cTraderAccounts');
+        await user.save();
+
+        console.log(`✅ [cTrader OAuth] Linked ${linked} account(s) for user ${verified.userId}`);
+
+        res.status(200).send(callbackPage(
+            'Connected to cTrader',
+            `${linked} trading account${linked === 1 ? '' : 's'} linked. You can close this window and return to the app.`,
+            '#089981'
+        ));
     } catch (error: any) {
-        res.status(500).send('Failed to authenticate with cTrader.');
+        console.error('[cTrader OAuth] Callback failed:', error.message);
+        res.status(500).send(callbackPage(
+            'Could not complete the connection',
+            'Something went wrong while talking to cTrader. Please try again.',
+            '#F23645'
+        ));
     }
 };
 
@@ -71,18 +167,32 @@ export const initTradingEngine = async () => {
         symbolIndex.clear();
         positionMap.clear();
         
+        // Only simulated positions belong in the engine's index. A CTRADER row
+        // is a mirror of a position the broker manages: it holds the broker's
+        // own stop and target, and running our TP/SL, trailing-stop or
+        // stop-out logic over it would close it twice — once here and once at
+        // the broker.
+        let simulated = 0;
         for (const pos of openPos) {
+            if ((pos as any).venue === 'CTRADER') continue;
             positionMap.set(pos._id.toString(), pos);
             if (!symbolIndex.has(pos.symbol)) symbolIndex.set(pos.symbol, new Set());
             symbolIndex.get(pos.symbol)!.add(pos._id.toString());
+            simulated++;
         }
-        console.log(`✅ [Trading Engine] Initialized with ${openPos.length} active positions.`);
+        const brokerHeld = openPos.length - simulated;
+        console.log(
+            `✅ [Trading Engine] Initialized with ${simulated} simulated position(s)` +
+            (brokerHeld ? `; ${brokerHeld} broker-held position(s) left to the broker.` : '.')
+        );
     } catch (err) {
         console.error('Failed to init trading engine:', err);
     }
 };
 
 function addToIndex(pos: any) {
+    // Broker-held positions are managed by the broker, never by our engine.
+    if (pos?.venue === 'CTRADER') return;
     positionMap.set(pos._id.toString(), pos);
     if (!symbolIndex.has(pos.symbol)) symbolIndex.set(pos.symbol, new Set());
     symbolIndex.get(pos.symbol)!.add(pos._id.toString());
@@ -375,9 +485,11 @@ async function processStopOutForUser(userId: string) {
         const user = await User.findById(userId);
         if (!user) return;
 
-        // Stop-out must be evaluated per account, not only on the demo one —
-        // a LIVE account was previously never checked at all.
-        const openPositions = await Position.find({ userId, status: 'OPEN' });
+        // Stop-out is evaluated per account. Broker-held positions are excluded:
+        // the broker runs its own margin call and stop-out, and ours would
+        // liquidate a position it does not control.
+        const allOpen = await Position.find({ userId, status: 'OPEN' });
+        const openPositions = (allOpen as any[]).filter(p => p.venue !== 'CTRADER');
         if (!openPositions.length) return;
 
         const accountIds = Array.from(new Set(
@@ -418,8 +530,9 @@ async function processStopOutForAccount(userId: string, user: any, accountId: st
         if (acctState.marginLevel <= STOP_OUT_LEVEL && acctState.margin > 0) {
             console.log(`🚨 [STOP-OUT] Triggered for user ${userId}. Balance: $${acctState.balance.toFixed(2)}, Equity: $${acctState.equity.toFixed(2)}, Margin Level: ${acctState.marginLevel.toFixed(2)}% (threshold: ${STOP_OUT_LEVEL}%)`);
             
-            // Only this account's positions may be liquidated for its breach.
-            const userPositions = await Position.find({ userId, status: 'OPEN', accountId });
+            // Only this account's simulated positions may be liquidated.
+            const accountPositions = await Position.find({ userId, status: 'OPEN', accountId });
+            const userPositions = (accountPositions as any[]).filter(p => p.venue !== 'CTRADER');
             
             // Sort by unrealized PnL ascending (worst losers first)
             userPositions.sort((a, b) => calcUnrealizedPnL(a) - calcUnrealizedPnL(b));
@@ -530,6 +643,10 @@ export async function accrueOvernightSwap(now = new Date()): Promise<number> {
     try {
         const open = await Position.find({ status: 'OPEN' });
         for (const pos of open as any[]) {
+            // The broker charges financing on its own positions and reports it
+            // back through the position's swap field; charging again here would
+            // double it.
+            if (pos.venue === 'CTRADER') continue;
             const amount = nightlySwap(pos, now);
             if (amount === undefined) {
                 console.warn(`[Swap] Skipped ${pos.symbol} — no rate available to value it.`);
@@ -685,7 +802,10 @@ async function getAccountState(userId: string, accountId?: string, userObj?: any
     }
     
     const balance = targetAccount?.balance ?? 0;
-    const openPositions = await Position.find({ userId, status: 'OPEN', accountId: targetAccount?.cTraderId });
+    const allOpen = await Position.find({ userId, status: 'OPEN', accountId: targetAccount?.cTraderId });
+    // Simulated equity and margin cover simulated positions only. A broker
+    // account's real figures come from the broker (see getLivePositions).
+    const openPositions = (allOpen as any[]).filter(p => p.venue !== 'CTRADER');
     const m = accountMetrics(balance, openPositions as any);
     if (m.unpriced.length) {
         console.warn(`[Account] Excluded unpriced positions for user ${userId}: ${m.unpriced.join(', ')}`);
@@ -773,6 +893,13 @@ export const getPositions = async (req: AuthRequest, res: Response) => {
         const user = await User.findById(req.user!.id);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
+        // For a broker account, report what the broker holds — reconciled
+        // against our mirror rows — rather than our own simulated book.
+        const readAccount = findAccount(user, accountId as string);
+        if (venueKindForAccount(readAccount) === 'CTRADER') {
+            return await getLivePositions(req, res, user, readAccount!);
+        }
+
         const query: any = { userId: req.user!.id };
         if (accountId) {
             query.accountId = accountId;
@@ -859,7 +986,21 @@ async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T>
 
 export const executeOrder = async (req: AuthRequest, res: Response) => {
     const userId = req.user!.id;
-    
+
+    // A live cTrader account is executed at the broker, not here. Checked
+    // before the simulation lock is taken, because the broker serialises its
+    // own orders and holding our lock across a network round trip would block
+    // the user's simulated account for no reason.
+    try {
+        const routingUser = await User.findById(userId);
+        const account = findAccount(routingUser, req.body?.accountId);
+        if (venueKindForAccount(account) === 'CTRADER') {
+            return await openLiveOrder(req, res, routingUser, account!);
+        }
+    } catch (e: any) {
+        return res.status(500).json({ success: false, message: `Could not determine the trading mode: ${e.message}` });
+    }
+
     await withUserLock(userId, async () => {
         try {
             const { symbol, side, volume, takeProfit, stopLoss, currentPrice, orderType = 'MARKET', targetPrice, trailingStopDistance = 0, accountId } = req.body;
@@ -1009,7 +1150,8 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
                 trailingStopDistance: Number(trailingStopDistance),
                 orderType,
                 commission: totalCommission,
-                status: isPending ? 'PENDING' : 'OPEN'
+                status: isPending ? 'PENDING' : 'OPEN',
+                venue: 'SIMULATED'
             });
 
             await position.save();
@@ -1050,6 +1192,13 @@ export const closePosition = async (req: AuthRequest, res: Response) => {
         positionId = reqPosId;
         if (!positionId) {
             return res.status(400).json({ success: false, message: 'Position ID is required' });
+        }
+
+        // A position held at the broker is closed there, not here.
+        const routingUser = await User.findById(req.user!.id);
+        const closingAccount = findAccount(routingUser, req.body?.accountId);
+        if (venueKindForAccount(closingAccount) === 'CTRADER') {
+            return await closeLivePosition(req, res, routingUser, closingAccount!);
         }
 
         if (activeOperations.has(positionId)) {
@@ -1250,6 +1399,14 @@ export const modifyPosition = async (req: AuthRequest, res: Response) => {
         positionId = reqPosId;
         if (!positionId) {
             return res.status(400).json({ success: false, message: 'Position ID is required' });
+        }
+
+        // Stops and targets on a broker position are amended at the broker,
+        // so the two never disagree about where the levels are.
+        const routingUser = await User.findById(req.user!.id);
+        const modifyAccount = findAccount(routingUser, req.body?.accountId);
+        if (venueKindForAccount(modifyAccount) === 'CTRADER') {
+            return await modifyLivePosition(req, res, routingUser, modifyAccount!);
         }
 
         if (activeOperations.has(positionId)) {

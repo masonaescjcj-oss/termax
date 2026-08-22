@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "ts-node src/services/pricing.test.ts && ts-node src/services/feeds/feeds.test.ts && ts-node src/services/venues/venues.test.ts",
+    "test": "ts-node src/services/pricing.test.ts && ts-node src/services/ctraderService.test.ts && ts-node src/services/feeds/feeds.test.ts && ts-node src/services/venues/venues.test.ts",
     "dev": "nodemon --ext ts --exec ts-node src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js"

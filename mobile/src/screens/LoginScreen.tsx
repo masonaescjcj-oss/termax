@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, SafeAreaView, Platform, ActivityIndicator, KeyboardAvoidingView, ScrollView, Image, Modal } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, SafeAreaView, Platform, ActivityIndicator, KeyboardAvoidingView, ScrollView, Image, Modal, Linking } from 'react-native';
 import { Text, TextInput } from '../components/Typography';
 ;
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -119,8 +119,9 @@ export default function LoginScreen() {
   const [hasBroker, setHasBroker] = useState(false);        // broker connected
 
   // Broker fields
-  const [brokerEmail, setBrokerEmail] = useState('');
-  const [brokerPassword, setBrokerPassword] = useState('');
+  // Broker credentials are never collected: linking goes through cTrader's
+  // own OAuth page.
+  const [awaitingBrokerConsent, setAwaitingBrokerConsent] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
 
@@ -478,30 +479,63 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!brokerEmail || !brokerPassword) {
-      showToast('Please enter both email and password.', 'error');
-      return;
-    }
+    // cTrader is linked through OAuth: the user authorises the app on
+    // Spotware's own page and the broker redirects back to our /callback,
+    // which stores the tokens. The app never sees or handles broker
+    // credentials — asking for them here (as this screen used to) would be
+    // both wrong and indistinguishable from phishing.
     setIsConnecting(true);
     try {
-      const mockCTraderId = 'ct_' + Math.random().toString(36).substr(2, 9);
-      const mockAccessToken = 'ct_token_' + Math.random().toString(36).substr(2, 15);
       const token = await getItemAsync('accessToken');
-      const res = await axios.post(`${BACKEND_URL}/api/v1/auth/connect-broker`, {
-         cTraderId: mockCTraderId, accessToken: mockAccessToken,
-         broker: 'IC Markets', accountType: 'LIVE', balance: 10000
-      }, {
-         headers: { Authorization: `Bearer ${token}` }
+      const res = await axios.get(`${BACKEND_URL}/api/v1/trade/auth`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.data.success) {
+
+      const url = res.data?.url;
+      if (!res.data?.success || !url) {
+        showToast(res.data?.message || 'Broker linking is not available right now.', 'error');
+        return;
+      }
+
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        showToast('Could not open the cTrader sign-in page.', 'error');
+        return;
+      }
+
+      await Linking.openURL(url);
+      setAwaitingBrokerConsent(true);
+      showToast('Authorise Termax in cTrader, then come back here.', 'info');
+    } catch (err: any) {
+      showToast(err.response?.data?.message || 'Could not start the cTrader connection.', 'error');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Pull the profile again to see whether the broker accounts arrived. Called
+  // when the user returns from the consent page.
+  const refreshBrokerLink = async () => {
+    setIsConnecting(true);
+    try {
+      const token = await getItemAsync('accessToken');
+      const res = await axios.get(`${BACKEND_URL}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const accounts = res.data?.data?.user?.cTraderAccounts || res.data?.data?.cTraderAccounts || [];
+      const linked = accounts.filter((a: any) => a.ctidTraderAccountId);
+
+      if (linked.length > 0) {
+        syncFromServer(accounts.map((a: any) => ({ ...a, id: a.cTraderId || a.accountId || a._id })));
         setHasBroker(true);
-        showToast('Successfully connected to cTrader!', 'success');
+        setAwaitingBrokerConsent(false);
+        showToast(`Connected — ${linked.length} account${linked.length === 1 ? '' : 's'} linked.`, 'success');
         setFlow('dashboard');
       } else {
-        showToast(res.data.message || 'Connection failed', 'error');
+        showToast('No cTrader account linked yet. Finish authorising and try again.', 'info');
       }
     } catch (err: any) {
-      showToast(err.response?.data?.message || 'Failed to connect to server', 'error');
+      showToast(err.response?.data?.message || 'Could not check the connection.', 'error');
     } finally {
       setIsConnecting(false);
     }
@@ -794,35 +828,44 @@ export default function LoginScreen() {
         <Link color="#2962FF" size={32} />
       </View>
       <Text style={[styles.connectedTitle, { color: '#2962FF' }]}>Connect cTrader</Text>
-      <Text style={styles.connectedDesc}>Link your broker to execute trades and sync your portfolio.</Text>
-
-      <View style={{ width: '100%', gap: 16, marginBottom: 16 }}>
-        <View style={styles.inputBox}>
-          <Mail color={colors.textMuted} size={20} style={{ marginRight: 12 }} />
-          <TextInput style={[styles.input, { color: colors.text }]} placeholder="cTrader Email" placeholderTextColor={colors.textMuted} keyboardType="email-address" autoCapitalize="none" value={brokerEmail} onChangeText={setBrokerEmail} />
-        </View>
-        <View style={styles.inputBox}>
-          <Key color={colors.textMuted} size={20} style={{ marginRight: 12 }} />
-          <TextInput style={[styles.input, { color: colors.text }]} placeholder="cTrader Password" placeholderTextColor={colors.textMuted} secureTextEntry value={brokerPassword} onChangeText={setBrokerPassword} />
-        </View>
-      </View>
+      <Text style={styles.connectedDesc}>
+        Link your broker to trade your real account. You will authorise Termax on
+        cTrader's own site — your broker password is never entered here.
+      </Text>
 
       <View style={styles.features}>
         <View style={styles.featureRow}>
           <ShieldCheck color={colors.primary} size={20} style={{ marginRight: 12 }} />
-          <Text style={[styles.featureText, { color: colors.text }]}>Bank-grade Security (Mock Flow)</Text>
+          <Text style={[styles.featureText, { color: colors.text }]}>You sign in on cTrader, not in this app</Text>
+        </View>
+        <View style={styles.featureRow}>
+          <Globe color={colors.primary} size={20} style={{ marginRight: 12 }} />
+          <Text style={[styles.featureText, { color: colors.text }]}>Access can be revoked from your cTrader account</Text>
         </View>
         <View style={[styles.featureRow, { marginBottom: 0 }]}>
           <Database color={colors.primary} size={20} style={{ marginRight: 12 }} />
-          <Text style={[styles.featureText, { color: colors.text }]}>Automatic Database Sync</Text>
+          <Text style={[styles.featureText, { color: colors.text }]}>Positions stay in sync with your broker</Text>
         </View>
       </View>
 
-      <TouchableOpacity onPress={connectCTrader} disabled={isConnecting} style={{ width: '100%' }}>
-        <LinearGradient colors={['#2962FF', '#1D4ED8']} style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          {isConnecting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.connectBtnText}>Connect Broker</Text>}
-        </LinearGradient>
-      </TouchableOpacity>
+      {awaitingBrokerConsent ? (
+        <>
+          <TouchableOpacity onPress={refreshBrokerLink} disabled={isConnecting} style={{ width: '100%' }}>
+            <LinearGradient colors={['#089981', '#05745F']} style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+              {isConnecting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.connectBtnText}>I've authorised — check now</Text>}
+            </LinearGradient>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={connectCTrader} disabled={isConnecting} style={{ marginTop: 12 }}>
+            <Text style={{ color: '#2962FF', fontSize: 14 }}>Open the cTrader page again</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <TouchableOpacity onPress={connectCTrader} disabled={isConnecting} style={{ width: '100%' }}>
+          <LinearGradient colors={['#2962FF', '#1D4ED8']} style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+            {isConnecting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.connectBtnText}>Continue with cTrader</Text>}
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity onPress={() => hasAccount ? setFlow('dashboard') : setFlow('auth')} style={{ marginTop: 16 }}>
         <Text style={{ color: '#64748B', fontSize: 14 }}>← Back</Text>
