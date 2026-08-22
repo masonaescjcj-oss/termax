@@ -13,6 +13,7 @@ import campaignRoutes from './routes/campaignRoutes';
 import botRoutes from './routes/botRoutes';
 import backtestRoutes from './routes/backtestRoutes';
 import insightRoutes from './routes/insightRoutes';
+import customIndicatorRoutes from './routes/customIndicatorRoutes';
 
 const app: Application = express();
 
@@ -54,6 +55,7 @@ app.use('/api/v1/campaigns', campaignRoutes);
 app.use('/api/v1/bots', botRoutes);
 app.use('/api/v1/backtests', backtestRoutes);
 app.use('/api/v1/insights', insightRoutes);
+app.use('/api/v1/indicators', customIndicatorRoutes);
 
 // Basic Error Handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

@@ -30,6 +30,8 @@ import { createIndicator } from '../strategy/indicators';
 import { validateSpec } from '../strategy/validate';
 import { Bar, TIMEFRAMES, Timeframe } from '../strategy/types';
 import { venueKindForAccount } from '../venues';
+import CustomIndicator from '../../models/CustomIndicator';
+import { evalExprOverBars, parseExpr } from '../strategy/exprIndicator';
 import { computeTradeDna } from '../insights/tradeDna';
 import { runAutopsy } from '../insights/autopsy';
 import { getTradeStats } from './statsRollup';
@@ -388,6 +390,60 @@ export const AI_TOOLS: AiTool[] = [
                 facts: report.facts,
                 verdicts: report.verdicts.map(v => ({ key: v.key, summary: v.en, evidence: v.evidence })),
             };
+        },
+    },
+    {
+        name: 'eval_indicator_expr',
+        description: 'Evaluate a CUSTOM indicator expression over recent candles and return its last values. Grammar: price sources (open/high/low/close/volume/hl2/hlc3/ohlc4), functions SMA/EMA/RSI/ATR/STDDEV/SUM/HIGHEST/LOWEST/REF/ABS/MIN/MAX, arithmetic + - * / and parentheses. Example: "(close - EMA(close, 20)) / ATR(14) * 100". On a grammar error returns { errors }: fix and retry. Use this to prototype an indicator BEFORE saving it.',
+        parameters: {
+            type: 'object',
+            properties: {
+                expr: { type: 'string' },
+                symbol: { type: 'string' },
+                timeframe: { type: 'string', enum: [...TIMEFRAMES] },
+                count: { type: 'number', description: 'Values to return, default 10, max 50.' },
+            },
+            required: ['expr', 'symbol', 'timeframe'],
+        },
+        async execute(_userId, args) {
+            const timeframe = args?.timeframe as Timeframe;
+            if (!TIMEFRAMES.includes(timeframe)) return err(`timeframe must be one of ${TIMEFRAMES.join(', ')}.`);
+            const count = Math.min(50, Math.max(1, Number(args?.count) || 10));
+            const bars = await loadBars(String(args?.symbol ?? ''), timeframe, count + 400);
+            if (bars.length < 30) return err(`Not enough candle history for ${args?.symbol} ${timeframe}.`);
+            const out = evalExprOverBars(String(args?.expr ?? ''), bars);
+            if (!out.ok) return { errors: out.errors };
+            if (!out.values.length) return err('The expression never produced a value on the available history (windows too long?).');
+            return { expr: args.expr, symbol: args.symbol, timeframe, values: out.values.slice(-count) };
+        },
+    },
+    {
+        name: 'save_custom_indicator',
+        description: 'Save a validated custom indicator expression so the user can draw it on their chart. Validate with eval_indicator_expr first. pane "price" draws over candles (moving averages, bands); "separate" gets its own pane (oscillators).',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: '2-40 characters, shown on the chart.' },
+                expr: { type: 'string' },
+                pane: { type: 'string', enum: ['price', 'separate'] },
+                color: { type: 'string', description: 'Hex like #F5A623 (optional).' },
+            },
+            required: ['name', 'expr'],
+        },
+        async execute(userId, args) {
+            const name = String(args?.name ?? '').trim();
+            if (name.length < 2 || name.length > 40) return err('name must be 2-40 characters.');
+            const check = parseExpr(String(args?.expr ?? ''));
+            if (!check.ok) return { errors: check.errors };
+            const existing = await CustomIndicator.listByUser(userId);
+            if (existing.length >= 20) return err('The user already has 20 custom indicators — one must be deleted first.');
+            const row = await CustomIndicator.create(userId, {
+                name,
+                expr: String(args.expr),
+                pane: args?.pane === 'price' ? 'price' : 'separate',
+                color: typeof args?.color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(args.color) ? args.color : '#F5A623',
+            });
+            return { indicatorId: row.id, name: row.name, pane: row.pane, note: 'Saved and enabled — it will draw on the chart automatically.' };
         },
     },
     {

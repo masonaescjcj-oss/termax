@@ -924,6 +924,29 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
                         const paneId = data.isMain ? 'candle_pane' : 'pane_' + data.name;
                         chart.removeIndicator(paneId, data.name);
                     }
+                } else if (data.type === 'customIndicator') {
+                    // A server-computed expression series. Values arrive as
+                    // {timestamp, value}; a per-name map feeds a registered
+                    // indicator whose calc just looks timestamps up.
+                    const indName = 'CUST_' + data.id;
+                    window.__customSeries = window.__customSeries || {};
+                    const map = {};
+                    (data.points || []).forEach(function(pt) { map[pt.timestamp] = pt.value; });
+                    window.__customSeries[indName] = map;
+                    try {
+                        klinecharts.registerIndicator({
+                            name: indName,
+                            shortName: data.name,
+                            figures: [{ key: 'v', title: data.name + ': ', type: 'line', styles: function() { return { color: data.color || '#F5A623' }; } }],
+                            calc: function(klines) {
+                                const m = (window.__customSeries || {})[indName] || {};
+                                return klines.map(function(k) { return { v: m[k.timestamp] }; });
+                            }
+                        });
+                    } catch (e) { /* already registered: the map refresh is enough */ }
+                    const isMain = data.pane === 'price';
+                    try { chart.removeIndicator(isMain ? 'candle_pane' : 'pane_' + indName, indName); } catch (e) {}
+                    chart.createIndicator(indName, isMain, { id: isMain ? 'candle_pane' : 'pane_' + indName });
                 } else if (data.type === 'botTrades') {
                     try { chart.removeOverlay({ groupId: 'botTrades' }); } catch(e) {}
                     (data.trades || []).forEach(function(t) {
@@ -1220,6 +1243,41 @@ export default function ChartScreen({ navigation, route }: any) {
 
   // Toolbar state
   const [selectedInterval, setSelectedInterval] = useState('1h');
+
+  // The user's ENABLED custom indicators, evaluated server-side for this
+  // symbol and interval, drawn whenever either changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getItemAsync('accessToken');
+        if (!token) return;
+        const tf = selectedInterval.toLowerCase();
+        if (tf === '1mo') return; // no monthly candle source for expressions
+        const res = await axios.get(`${BACKEND_URL}/api/v1/indicators/values`, {
+          params: { symbol, timeframe: tf, limit: 300 },
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const list = res.data?.data ?? [];
+        if (cancelled || !list.length) return;
+        let tries = 0;
+        const push = () => {
+          for (const ind of list) {
+            if (ind.points?.length) {
+              sendMessageToChart(JSON.stringify({ type: 'customIndicator', ...ind }));
+            }
+          }
+        };
+        const timer = setInterval(() => {
+          tries++;
+          if (cancelled || tries > 40) { clearInterval(timer); return; }
+          if (chartReadyRef.current) { clearInterval(timer); push(); }
+        }, 300);
+      } catch { /* custom indicators are optional decoration */ }
+    })();
+    return () => { cancelled = true; };
+  }, [symbol, selectedInterval]);
+
   const [chartType, setChartType] = useState<'candle' | 'line'>('candle');
   const [isDrawingsOpen, setIsDrawingsOpen] = useState(false);
   const [isIntervalsOpen, setIsIntervalsOpen] = useState(false);
