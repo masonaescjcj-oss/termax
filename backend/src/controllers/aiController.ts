@@ -4,41 +4,15 @@ import { AuthRequest } from '../middleware/auth';
 import { supabase } from '../config/supabase';
 import { mapUserToCamel, mapPositionToCamel } from '../utils/mapper';
 import { loadAIConfig } from '../utils/aiConfigManager';
-import { priceCache } from '../sockets/marketSocket';
+import { accountMetrics, unrealizedPnL, marginRequired } from '../services/pricing';
 
-const LEVERAGE = 200;
-
-const contractSizes: Record<string, number> = {
-    'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-    'XRP/USDT': 1, 'ADA/USDT': 1, 'DOGE/USDT': 1, 'AVAX/USDT': 1,
-    'LINK/USDT': 1, 'DOT/USDT': 1, 'MATIC/USDT': 1, 'SHIB/USDT': 1,
-    'LTC/USDT': 1, 'TRX/USDT': 1, 'UNI/USDT': 1,
-    'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-    'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-    'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-};
-
-const pnlMultipliers: Record<string, number> = {
-    'BTC/USDT': 1, 'ETH/USDT': 1, 'BNB/USDT': 1, 'SOL/USDT': 1,
-    'XRP/USDT': 1, 'ADA/USDT': 1, 'DOGE/USDT': 1, 'AVAX/USDT': 1,
-    'LINK/USDT': 1, 'DOT/USDT': 1, 'MATIC/USDT': 1, 'SHIB/USDT': 1,
-    'LTC/USDT': 1, 'TRX/USDT': 1, 'UNI/USDT': 1,
-    'GOLD': 100, 'SILVER': 5000, 'USOIL': 1000,
-    'SPX': 1, 'NDQ': 1, 'DJI': 1, 'VIX': 1, 'DXY': 1,
-    'AAPL': 1, 'MSFT': 1, 'NVDA': 1, 'GOOGL': 1, 'AMZN': 1, 'TSLA': 1, 'NFLX': 1,
-};
-
-function calcMarginRequired(symbol: string, volume: number, price: number): number {
-    const cs = contractSizes[symbol] || 1;
-    return (volume * cs * price) / LEVERAGE;
-}
-
-function calcUnrealizedPnL(pos: any): number {
-    const mult = pnlMultipliers[pos.symbol] || 1;
-    const currentPrice = priceCache[pos.symbol] || pos.entryPrice;
-    const diff = pos.side === 'BUY' ? (pos.closePrice || currentPrice) - pos.entryPrice : pos.entryPrice - (pos.closePrice || currentPrice);
-    return (diff * pos.volume * mult) - (pos.commission || 0);
-}
+/**
+ * The AI reads the trader's live account, so it must use the same maths as the
+ * engine. This file previously carried its own copy of the contract-size and
+ * P/L-multiplier tables — the sixth in the codebase, and like the others it
+ * contained no forex pairs, so MaxAI quoted a trader's EUR/USD equity and risk
+ * 100,000x too small while sounding completely certain about it.
+ */
 
 /**
  * Handle chat requests for MaxAI (formerly AI Coach)
@@ -71,17 +45,28 @@ export const chatWithMaxAI = async (req: AuthRequest, res: Response) => {
         const positions = (rawPositions || []).map(mapPositionToCamel);
 
         // 3. Compute active context variables
-        const balance = demoAccount?.balance || 10000;
-        const unrealizedPnl = positions.reduce((sum: number, p: any) => sum + calcUnrealizedPnL(p), 0);
-        const equity = balance + unrealizedPnl;
-        const marginUsed = positions.reduce((sum: number, p: any) => sum + calcMarginRequired(p.symbol, p.volume, p.entryPrice), 0);
-        const freeMargin = Math.max(0, equity - marginUsed);
+        const balance = demoAccount?.balance ?? 0;
+        const metrics = accountMetrics(balance, positions as any);
+        const equity = metrics.equity;
+        const marginUsed = metrics.margin;
+        const freeMargin = metrics.freeMargin;
         const openCount = positions.length;
 
         // 4. Construct high-fidelity system prompt
         const activeTradesDesc = positions
-            .map((p: any) => `${p.side} ${p.volume} Lot ${p.symbol} (Entry: ${p.entryPrice}, Current PnL: $${calcUnrealizedPnL(p).toFixed(2)})`)
+            .map((p: any) => {
+                const pnl = unrealizedPnL(p as any);
+                // Say so rather than printing a zero that reads like a fact.
+                const pnlText = pnl === null || pnl === undefined ? 'not priced yet' : `$${pnl.toFixed(2)}`;
+                return `${p.side} ${p.volume} Lot ${p.symbol} (Entry: ${p.entryPrice}, Current PnL: ${pnlText})`;
+            })
             .join(', ') || 'None';
+
+        // Positions the feed cannot value would otherwise silently drop out of
+        // equity and margin, so the model is told instead of being misled.
+        const unpricedNote = metrics.unpriced.length
+            ? `\n- NOTE: no live price for ${metrics.unpriced.join(', ')}; these are excluded from equity and margin above.`
+            : '';
 
         const systemPrompt = `You are MaxAI, a premier institutional trading intelligence assistant built inside the cTrade platform.
 You assist traders with smart market analytics, risk management, and order execution advice using advanced Smart Money Concepts (SMC), liquidity analysis, and macroeconomic insights.
@@ -90,7 +75,7 @@ User Profile & Live Trading Stats:
 - Equity: $${equity.toFixed(2)}
 - Free Margin: $${freeMargin.toFixed(2)}
 - Active Positions Count: ${openCount}
-- Active Positions Details: ${activeTradesDesc}
+- Margin Used: $${marginUsed.toFixed(2)}\n- Active Positions Details: ${activeTradesDesc}${unpricedNote}
 
 Formatting Constraints:
 - Keep your answers clean, well-formatted, concise, and professional.
