@@ -1,0 +1,68 @@
+{
+  "expo": {
+    "name": "Termax",
+    "slug": "mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.isaacars.termax"
+    },
+    "android": {
+      "package": "com.isaacars.termax",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Montserrat.ttf",
+            "./assets/fonts/Inter.ttf",
+            "./assets/fonts/Roboto.ttf",
+            "./assets/fonts/Poppins.ttf",
+            "./assets/fonts/SpaceGrotesk.ttf",
+            "./assets/fonts/Outfit.ttf",
+            "./assets/fonts/Lato.ttf",
+            "./assets/fonts/OpenSans.ttf",
+            "./assets/fonts/Oswald.ttf",
+            "./assets/fonts/Raleway.ttf",
+            "./assets/fonts/Nunito.ttf",
+            "./assets/fonts/PlayfairDisplay.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "owner": "itazoom4",
+    "extra": {
+      "eas": {
+        "projectId": "f6384776-20ed-40b1-acd7-d1517060488d"
+      }
+    }
+  }
+}

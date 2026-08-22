@@ -1,0 +1,6 @@
+{
+  "welcomeHtml": "<b>Welcome to the Trading Terminal!</b> <tg-emoji emoji-id=\"5231200819986047254\">📊</tg-emoji>\n\nClick the button below to open the Mini App and start trading.",
+  "buttonText": "Lunch Termax",
+  "buttonStyle": "primary",
+  "buttonIconEmojiId": "5305731434718185456"
+}

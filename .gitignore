@@ -1,0 +1,59 @@
+# ---- dependencies ----
+node_modules/
+.pnp
+.pnp.js
+
+# ---- secrets: never commit ----
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# ---- build output ----
+dist/
+build/
+web-build/
+*.tsbuildinfo
+
+# ---- Expo / React Native ----
+.expo/
+expo-env.d.ts
+.metro-health-check*
+.kotlin/
+*.orig.*
+
+# generated native projects (regenerate with `npx expo prebuild`)
+mobile/android/
+mobile/ios/
+
+# ---- build artifacts ----
+*.apk
+*.aab
+*.ipa
+
+# ---- logs & debug dumps ----
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+inspect-archive/
+
+# ---- deploy / tooling ----
+.vercel/
+caddy/caddy.log
+
+# ---- editor / OS ----
+.DS_Store
+Thumbs.db
+
+# runtime AI provider config (written by the admin panel; may hold an API key)
+backend/src/ai_config.json
+!backend/src/ai_config.example.json

@@ -1,0 +1,9 @@
+{
+  "activeProvider": "nara",
+  "apiKey": "",
+  "baseUrl": "https://router.bynara.id/v1",
+  "modelName": "mistral-medium-3-5",
+  "fallbackApiKey": "",
+  "fallbackBaseUrl": "https://api.openai.com/v1",
+  "fallbackModelName": "gpt-4o"
+}

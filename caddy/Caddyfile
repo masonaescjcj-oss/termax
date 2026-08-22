@@ -1,0 +1,50 @@
+:8080 {
+    encode gzip zstd
+
+    # Backend API routes → port 5000
+    handle /api/* {
+        reverse_proxy 127.0.0.1:5000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Socket.io WebSocket → port 5000
+    handle /socket.io/* {
+        reverse_proxy 127.0.0.1:5000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Static uploads (community images, etc.) → port 5000
+    handle /uploads/* {
+        reverse_proxy 127.0.0.1:5000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Everything else → serve Expo frontend static build directly
+    handle /* {
+        root * "c:/Users/asiac/OneDrive/Desktop/trade (2)/trade/mobile/dist"
+        try_files {path} {path}/ /index.html
+        file_server
+
+        # Caching headers for Expo static hashed assets
+        @static_assets {
+            path /_expo/static/* *.js *.css *.png *.jpg *.jpeg *.svg *.ico *.woff *.woff2
+        }
+        header @static_assets Cache-Control "public, max-age=31536000, immutable"
+
+        # Ensure index.html is checked for updates
+        @index_html {
+            path / /index.html
+        }
+        header @index_html Cache-Control "public, max-age=0, must-revalidate"
+    }
+
+    log {
+        output file "c:\Users\asiac\OneDrive\Desktop\trade (2)\trade\caddy\caddy.log"
+    }
+}
