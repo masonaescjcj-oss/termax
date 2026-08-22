@@ -97,6 +97,7 @@ export const mapPositionToCamel = (dbPos: any): any => {
         advancedRules: dbPos.advanced_rules || [],
         venue: dbPos.venue || 'SIMULATED',
         brokerPositionId: dbPos.broker_position_id || null,
+        botId: dbPos.bot_id || null,
         openTime: dbPos.open_time ? new Date(dbPos.open_time) : new Date(),
         closeTime: dbPos.close_time ? new Date(dbPos.close_time) : null,
         createdAt: dbPos.created_at ? new Date(dbPos.created_at) : new Date(),
@@ -129,6 +130,7 @@ export const mapPositionToSnake = (appPos: any): any => {
     if (appPos.advancedRules !== undefined) snake.advanced_rules = appPos.advancedRules;
     if (appPos.venue !== undefined) snake.venue = appPos.venue;
     if (appPos.brokerPositionId !== undefined) snake.broker_position_id = appPos.brokerPositionId;
+    if (appPos.botId !== undefined) snake.bot_id = appPos.botId;
     if (appPos.openTime !== undefined) snake.open_time = appPos.openTime;
     if (appPos.closeTime !== undefined) snake.close_time = appPos.closeTime;
     return snake;

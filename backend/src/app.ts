@@ -10,6 +10,7 @@ import brokerRoutes from './routes/brokerRoutes';
 import adminRoutes from './routes/adminRoutes';
 import communityRoutes from './routes/communityRoutes';
 import campaignRoutes from './routes/campaignRoutes';
+import botRoutes from './routes/botRoutes';
 
 const app: Application = express();
 
@@ -48,6 +49,7 @@ app.use('/api/v1/brokers', brokerRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/communities', communityRoutes);
 app.use('/api/v1/campaigns', campaignRoutes);
+app.use('/api/v1/bots', botRoutes);
 
 // Basic Error Handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

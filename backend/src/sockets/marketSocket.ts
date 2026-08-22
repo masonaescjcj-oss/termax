@@ -6,6 +6,8 @@ import fs from 'fs';
 import path from 'path';
 import { setMidPrice, setQuote, getMid, getQuote, getAllMids, getSpreadPips } from '../services/pricing';
 import { initFeeds, feedRouter } from '../services/feeds';
+import { liveBars } from '../services/candles/liveBars';
+import { botRunner } from '../services/bots/runner';
 import { roundPrice } from '../config/instruments';
 
 const yahooFinance = new YahooFinance();
@@ -263,11 +265,33 @@ export const setupMarketSockets = (io: Server) => {
 
     // Providers: the broker's cTrader feed for forex/metals/indices, Binance
     // for crypto, Yahoo as a fallback. Both trading modes price off these.
+    //
+    // Quotes are NOT emitted per event. A busy feed can print many quotes a
+    // second per symbol, and emitting each one to every subscribed socket is
+    // the 6,000-messages-per-second problem (docs/ai-architecture.md §3 rule
+    // 2). Instead each quote marks its symbol dirty and feeds the bar
+    // builder; a 300ms flush emits one payload per changed symbol — the UI
+    // cannot use updates faster than that anyway.
+    const dirtySymbols = new Set<string>();
+
     void initFeeds((quote) => {
         priceCache[quote.symbol] = getMid(quote.symbol) ?? (quote.bid + quote.ask) / 2;
-        const payload = quotePayload(quote.symbol);
-        if (payload) io.to(quote.symbol).emit('priceUpdate', payload);
+        dirtySymbols.add(quote.symbol);
+        liveBars.onQuote(quote);
     }).catch((e: any) => console.error('[Feed] Initialisation failed:', e.message));
+
+    setInterval(() => {
+        if (dirtySymbols.size === 0) return;
+        for (const symbol of dirtySymbols) {
+            const payload = quotePayload(symbol);
+            if (payload) io.to(symbol).emit('priceUpdate', payload);
+        }
+        dirtySymbols.clear();
+    }, 300);
+
+    // Closed bars drive the bots.
+    liveBars.onBar((symbol, tf, bar) => botRunner.onBar(symbol, tf, bar));
+    liveBars.start();
 
     io.on('connection', (socket) => {
         socket.on('subscribe', async (payload: any) => {
@@ -466,10 +490,9 @@ export const setupMarketSockets = (io: Server) => {
     // With SYNTHETIC_TICKS enabled the drift returns for demo purposes, but it
     // is emitted to clients only and never reaches the execution engines or
     // the quote store used to value positions.
-    setInterval(() => {
-        const symbols = Array.from(activeSubscriptions);
-        for (const symbol of symbols) {
-            if (SYNTHETIC_TICKS) {
+    if (SYNTHETIC_TICKS) {
+        setInterval(() => {
+            for (const symbol of activeSubscriptions) {
                 const base = getMid(symbol) ?? basePriceCache[symbol];
                 if (!base) continue;
                 const drift = (Math.random() - 0.5) * base * 0.0002;
@@ -479,12 +502,9 @@ export const setupMarketSockets = (io: Server) => {
                     symbol, price: mid, bid: mid, ask: mid,
                     spread: spec, synthetic: true, timestamp: new Date(),
                 });
-            } else {
-                const payload = quotePayload(symbol);
-                if (payload) io.to(symbol).emit('priceUpdate', payload);
             }
-        }
-    }, 1000);
+        }, 1000);
+    }
 
     // Overnight financing. Checked every minute; accrueOvernightSwap only
     // acts inside the rollover hour and only once per date.

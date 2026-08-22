@@ -984,29 +984,39 @@ async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T>
     }
 }
 
-export const executeOrder = async (req: AuthRequest, res: Response) => {
-    const userId = req.user!.id;
+/** Parameters for a simulated (paper) order — HTTP body or a bot signal. */
+export interface SimOrderParams {
+    accountId?: string;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    volume: number;
+    takeProfit?: number | null;
+    stopLoss?: number | null;
+    orderType?: 'MARKET' | 'LIMIT' | 'STOP';
+    targetPrice?: number;
+    trailingStopDistance?: number;
+    /** Set when a bot placed the order, so its record is queryable. */
+    botId?: string | null;
+}
 
-    // A live cTrader account is executed at the broker, not here. Checked
-    // before the simulation lock is taken, because the broker serialises its
-    // own orders and holding our lock across a network round trip would block
-    // the user's simulated account for no reason.
-    try {
-        const routingUser = await User.findById(userId);
-        const account = findAccount(routingUser, req.body?.accountId);
-        if (venueKindForAccount(account) === 'CTRADER') {
-            return await openLiveOrder(req, res, routingUser, account!);
-        }
-    } catch (e: any) {
-        return res.status(500).json({ success: false, message: `Could not determine the trading mode: ${e.message}` });
-    }
+export interface SimResult {
+    status: number;
+    body: any;
+}
 
-    await withUserLock(userId, async () => {
+/**
+ * Core of simulated order placement — margin checks, fill on the correct
+ * book side, persistence, indexing, socket emit. The HTTP handler and the
+ * bot runner both call THIS, so a bot's fill can never diverge from a
+ * human's: one code path, two callers.
+ */
+export async function openSimulatedOrder(userId: string, params: SimOrderParams): Promise<SimResult> {
+    return withUserLock(userId, async () => {
         try {
-            const { symbol, side, volume, takeProfit, stopLoss, currentPrice, orderType = 'MARKET', targetPrice, trailingStopDistance = 0, accountId } = req.body;
-            
+            const { symbol, side, volume, takeProfit, stopLoss, orderType = 'MARKET', targetPrice, trailingStopDistance = 0, accountId, botId = null } = params;
+
             const user = await User.findById(userId);
-            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            if (!user) return { status: 404, body: { success: false, message: 'User not found' } };
 
             // Ensure default demo account is initialized/migrated
             if (accountId === 'default_demo' || !accountId) {
@@ -1047,12 +1057,12 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             if (isPending) {
                 entryP = roundPrice(symbol, Number(targetPrice));
                 if (!(entryP > 0)) {
-                    return res.status(400).json({ success: false, message: 'A pending order needs a valid target price.' });
+                    return { status: 400, body: { success: false, message: 'A pending order needs a valid target price.' } };
                 }
             } else {
                 const fill = bookOpenPrice(symbol, side as Side);
                 if (fill === undefined || !(fill > 0)) {
-                    return res.status(400).json({ success: false, message: 'No live quote for this symbol. Please wait for market data.' });
+                    return { status: 400, body: { success: false, message: 'No live quote for this symbol. Please wait for market data.' } };
                 }
                 entryP = roundPrice(symbol, fill);
             }
@@ -1060,13 +1070,13 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             // ═══ VOLUME & COST ═══
             const requestedVol = Number(volume);
             if (!(requestedVol > 0)) {
-                return res.status(400).json({ success: false, message: 'Volume must be greater than zero.' });
+                return { status: 400, body: { success: false, message: 'Volume must be greater than zero.' } };
             }
             if (requestedVol < spec.minVolume) {
-                return res.status(400).json({ success: false, message: `Minimum volume for ${symbol} is ${spec.minVolume} lots.` });
+                return { status: 400, body: { success: false, message: `Minimum volume for ${symbol} is ${spec.minVolume} lots.` } };
             }
             if (requestedVol > spec.maxVolume) {
-                return res.status(400).json({ success: false, message: `Maximum volume for ${symbol} is ${spec.maxVolume} lots.` });
+                return { status: 400, body: { success: false, message: `Maximum volume for ${symbol} is ${spec.maxVolume} lots.` } };
             }
             const vol = normaliseVolume(symbol, requestedVol);
             const totalCommission = commissionFor(symbol, vol);
@@ -1075,16 +1085,16 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             try {
                 requiredMargin = calcMarginRequired(symbol, vol);
             } catch {
-                return res.status(400).json({ success: false, message: `Cannot price margin for ${symbol} yet. Please wait for market data.` });
+                return { status: 400, body: { success: false, message: `Cannot price margin for ${symbol} yet. Please wait for market data.` } };
             }
             const acct = await getAccountState(userId, accountId, user);
 
             // Block if free margin is already negative or zero
             if (acct.freeMargin <= 0) {
-                return res.status(400).json({
+                return { status: 400, body: {
                     success: false,
                     message: `No free margin available. Free Margin: $${acct.freeMargin.toFixed(2)}. Close existing positions first.`
-                });
+                } };
             }
 
             // Check if free margin is enough for this order + commission
@@ -1095,10 +1105,10 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
                 const commissionForOneLot = commissionFor(symbol, 1);
                 const maxVol = normaliseVolume(symbol, Math.max(0,
                     acct.freeMargin / (marginForOneLot + commissionForOneLot)));
-                return res.status(400).json({ 
+                return { status: 400, body: { 
                     success: false, 
                     message: `Insufficient margin. Required: $${totalCost.toFixed(2)} (margin $${requiredMargin.toFixed(2)} + commission $${totalCommission.toFixed(2)}), Available: $${acct.freeMargin.toFixed(2)}. Max volume: ${Math.max(0, maxVol)} lots.`
-                });
+                } };
             }
 
             // Prevent opening if margin level would drop below MARGIN_CALL_LEVEL (100%)
@@ -1106,27 +1116,27 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             const projectedEquity = acct.equity - totalCommission; // commission reduces equity
             const projectedMarginLevel = newTotalMargin > 0 ? (projectedEquity / newTotalMargin) * 100 : 9999;
             if (projectedMarginLevel < MARGIN_CALL_LEVEL) {
-                return res.status(400).json({
+                return { status: 400, body: {
                     success: false,
                     message: `Trade rejected: Margin level would drop to ${projectedMarginLevel.toFixed(0)}%. Minimum is ${MARGIN_CALL_LEVEL}%.`
-                });
+                } };
             }
 
             // Validate TP/SL side relative to execution price
             const checkPrice = entryP;
             if (side === 'BUY') {
                 if (takeProfit && Number(takeProfit) <= checkPrice) {
-                    return res.status(400).json({ success: false, message: `Take profit must be higher than execution price (${checkPrice}) for BUY orders.` });
+                    return { status: 400, body: { success: false, message: `Take profit must be higher than execution price (${checkPrice}) for BUY orders.` } };
                 }
                 if (stopLoss && Number(stopLoss) >= checkPrice) {
-                    return res.status(400).json({ success: false, message: `Stop loss must be lower than execution price (${checkPrice}) for BUY orders.` });
+                    return { status: 400, body: { success: false, message: `Stop loss must be lower than execution price (${checkPrice}) for BUY orders.` } };
                 }
             } else if (side === 'SELL') {
                 if (takeProfit && Number(takeProfit) >= checkPrice) {
-                    return res.status(400).json({ success: false, message: `Take profit must be lower than execution price (${checkPrice}) for SELL orders.` });
+                    return { status: 400, body: { success: false, message: `Take profit must be lower than execution price (${checkPrice}) for SELL orders.` } };
                 }
                 if (stopLoss && Number(stopLoss) <= checkPrice) {
-                    return res.status(400).json({ success: false, message: `Stop loss must be higher than execution price (${checkPrice}) for SELL orders.` });
+                    return { status: 400, body: { success: false, message: `Stop loss must be higher than execution price (${checkPrice}) for SELL orders.` } };
                 }
             }
 
@@ -1151,7 +1161,8 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
                 orderType,
                 commission: totalCommission,
                 status: isPending ? 'PENDING' : 'OPEN',
-                venue: 'SIMULATED'
+                venue: 'SIMULATED',
+                botId
             });
 
             await position.save();
@@ -1170,20 +1181,100 @@ export const executeOrder = async (req: AuthRequest, res: Response) => {
             const doc: any = position.toJSON();
             doc.id = doc._id;
 
-            res.status(200).json({
-                success: true,
-                message: 'Order executed successfully',
-                data: doc
-            });
-
             // Emit real-time update to user's socket room
             const updatedAcct = await getAccountState(userId, accountId, user);
             emitPositionUpdate(userId, 'positionOpened', { position: doc, account: updatedAcct });
+
+            return { status: 200, body: { success: true, message: 'Order executed successfully', data: doc } };
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            return { status: 500, body: { success: false, error: error.message } };
         }
     });
+}
+
+export const executeOrder = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.id;
+
+    // A live cTrader account is executed at the broker, not here. Checked
+    // before the simulation lock is taken, because the broker serialises its
+    // own orders and holding our lock across a network round trip would block
+    // the user's simulated account for no reason.
+    try {
+        const routingUser = await User.findById(userId);
+        const account = findAccount(routingUser, req.body?.accountId);
+        if (venueKindForAccount(account) === 'CTRADER') {
+            return await openLiveOrder(req, res, routingUser, account!);
+        }
+    } catch (e: any) {
+        return res.status(500).json({ success: false, message: `Could not determine the trading mode: ${e.message}` });
+    }
+
+    const result = await openSimulatedOrder(userId, req.body);
+    res.status(result.status).json(result.body);
 };
+
+/**
+ * Close a simulated position at the current market, in full — the bot
+ * runner's exit path. Mirrors the full-close branch of the HTTP handler:
+ * fill on the closing side of the book, realise P/L through the pricing
+ * engine, credit the position's own account, record history, drop the
+ * position from the engine index and emit.
+ */
+export async function closeSimulatedAtMarket(
+    userId: string,
+    positionId: string,
+    reason = 'BOT_EXIT'
+): Promise<SimResult> {
+    if (activeOperations.has(positionId)) {
+        return { status: 409, body: { success: false, message: 'Position is already being processed.' } };
+    }
+    activeOperations.add(positionId);
+    try {
+        const position = await Position.findOne({ userId, id: positionId });
+        if (!position || position.status !== 'OPEN') {
+            return { status: 404, body: { success: false, message: 'Open position not found.' } };
+        }
+        if (position.venue === 'CTRADER') {
+            return { status: 400, body: { success: false, message: 'Broker positions are closed at the broker, not here.' } };
+        }
+
+        const bookExit = bookClosePrice(position.symbol, position.side as Side);
+        if (bookExit === undefined) {
+            return { status: 400, body: { success: false, message: `No live quote for ${position.symbol}; cannot close at market.` } };
+        }
+        const closeP = roundPrice(position.symbol, bookExit);
+
+        position.status = 'CLOSED';
+        position.closeTime = new Date();
+        position.closePrice = closeP;
+        position.finalProfit = realizedPnL(position as any, closeP) ?? 0;
+        await position.save();
+
+        const user = await User.findById(userId);
+        if (user) await creditRealisedPnL(user, position, position.finalProfit);
+
+        await new TradeHistory({
+            userId,
+            positionId: position._id,
+            action: 'CLOSE',
+            details: `${reason} at ${closeP} with PnL: $${position.finalProfit.toFixed(2)}`,
+            priceAtAction: closeP,
+        }).save();
+
+        removeFromIndex(position._id.toString(), position.symbol);
+
+        const doc: any = position.toJSON();
+        doc.id = doc._id;
+        const updatedAcct = await getAccountState(userId, position.accountId, user);
+        emitPositionUpdate(userId, 'positionClosed', { position: doc, account: updatedAcct });
+
+        return { status: 200, body: { success: true, message: 'Position closed', data: doc } };
+    } catch (error: any) {
+        return { status: 500, body: { success: false, error: error.message } };
+    } finally {
+        activeOperations.delete(positionId);
+    }
+}
 
 export const closePosition = async (req: AuthRequest, res: Response) => {
     let positionId: string | undefined;

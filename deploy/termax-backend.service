@@ -1,0 +1,27 @@
+# systemd unit for the Termax backend.
+#   sudo cp deploy/termax-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now termax-backend
+[Unit]
+Description=Termax trading backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=termax
+WorkingDirectory=/srv/termax/app/backend
+# Secrets live in the env file, never in this unit.
+EnvironmentFile=/etc/termax/backend.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=3
+# The engine holds live state in memory; give it a clean stop.
+TimeoutStopSec=20
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/termax/app/backend/data /srv/termax/app/backend/public/uploads /srv/termax/app/backend/src
+
+[Install]
+WantedBy=multi-user.target

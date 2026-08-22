@@ -12,6 +12,8 @@ import { initTradingEngine } from './controllers/tradeController';
 import { initBot } from './bot';
 import { seedCampaigns } from './controllers/campaignController';
 import { initVenues } from './services/venues';
+import { botRunner } from './services/bots/runner';
+import { feedRouter } from './services/feeds';
 
 const PORT = process.env.PORT || 5000;
 
@@ -73,6 +75,19 @@ const startServer = async () => {
                 initVenues();
             } catch (e: any) {
                 console.log('Venue init notice:', e.message);
+            }
+
+            try {
+                // Bots resume their forward tests. The feed hook makes each
+                // registered bot's symbol stream even when no client watches
+                // its chart — a bot is a subscriber in its own right.
+                botRunner.setFeedHook((symbol) => {
+                    feedRouter.subscribe([symbol]).catch((e: any) =>
+                        console.warn(`[Feed] Could not subscribe ${symbol} for bots:`, e.message));
+                });
+                await botRunner.loadActive();
+            } catch (e: any) {
+                console.log('Bot runner notice:', e.message);
             }
 
             try {
