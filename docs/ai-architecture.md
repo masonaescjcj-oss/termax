@@ -1,47 +1,46 @@
-# AI engine architecture
+# معماری موتور هوش مصنوعی
 
-Technical plan for the AI side of Termax: assistant, bot builder, backtest,
-forward test, indicator builder, and running many bots on one server.
+طرح فنی بخش AI ترمکس: دستیار، سازنده‌ی ربات، بک‌تست، فوروارد تست، سازنده‌ی
+اندیکاتور، و اجرای تعداد زیادی ربات روی یک سرور.
 
-A reader-friendly version of this document, with diagrams, is published as an
-artifact — see the link in the session notes. This file is the version that
-belongs in the repository.
+نسخه‌ی خوانا و همراه با نمودار همین سند به‌عنوان یک صفحه منتشر شده — لینکش در
+یادداشت‌های نشست است. این فایل نسخه‌ای است که جای آن در مخزن است.
 
-Last updated: 2026-08-22
+آخرین به‌روزرسانی: ۲۲ آگوست ۲۰۲۶
 
 ---
 
-## 1. The decision everything else depends on
+## ۱. تصمیمی که همه‌چیز به آن وابسته است
 
-**Is a user's bot a program, or is it data?**
+**ربات کاربر یک برنامه است، یا داده؟**
 
-The instinct is a program: give people an editor, run their JavaScript in a
-sandbox. That choice makes the thousand-bot requirement unreachable, because a
-sandbox has a floor price per bot.
+حس اولیه می‌گوید برنامه: ادیتور بده، جاوااسکریپت را در sandbox اجرا کن. همین
+انتخاب شرط «هزار ربات» را دست‌نیافتنی می‌کند، چون sandbox یک کف قیمت به‌ازای هر
+ربات دارد.
 
-The alternative is a **declarative specification** — a small validated JSON
-document — interpreted by one engine shared by every bot.
+راه دیگر **مشخصات اعلانی** است — یک سند JSON کوچک و اعتبارسنجی‌شده — که یک موتور
+واحد و مشترک تفسیرش می‌کند.
 
-| Concern | Bot as sandboxed code | Bot as declarative spec |
+| موضوع | ربات به‌عنوان کد در sandbox | ربات به‌عنوان مشخصات اعلانی |
 |---|---|---|
-| Memory per bot | 1–2 MB (a WASM heap, minimum) | A few hundred bytes of state |
-| 1,000 bots | ~1.5 GB, plus ~20 s of cold starts | Under 10 MB including all shared market state |
-| AI can author it | Code that may not run, may loop, may be subtly wrong | JSON checked against a schema before it is accepted |
-| Static analysis | Effectively impossible | Trivial — read the spec |
-| Shareable | Requires reading someone's code to trust it | Renders as a rule list in any language |
-| Backtest/live parity | Two code paths that drift | One interpreter, two clocks — parity by construction |
-| Expressive ceiling | Unlimited | Bounded by the grammar |
+| حافظه هر ربات | ۱–۲ مگابایت (یک هیپ WASM، حداقل) | چند صد بایت state |
+| هزار ربات | حدود ۱.۵ گیگابایت + ~۲۰ ثانیه cold start | زیر ۱۰ مگابایت شامل تمام وضعیت مشترک بازار |
+| AI می‌تواند بسازدش؟ | کدی که ممکن است اجرا نشود، حلقه بزند، یا نامحسوس غلط باشد | JSON که پیش از پذیرش با schema بررسی می‌شود |
+| تحلیل استاتیک | روی کد دلخواه عملاً ناممکن | ساده — مشخصات را بخوان |
+| اشتراک‌گذاری | برای اعتماد باید کد کسی را خواند | به‌صورت فهرست قواعد در هر زبانی رندر می‌شود |
+| همخوانی بک‌تست/لایو | دو مسیر کد که از هم دور می‌شوند | یک مفسر، دو ساعت — همخوانی ساختاری |
+| سقف بیانگری | بی‌نهایت | محدود به گرامر |
 
-The last row is the only real cost. Retail strategies overwhelmingly reduce to
-conditions over indicators plus risk rules. Capitalise.ai's product is natural
-language compiled into exactly this kind of rule set, and Composer turns a
-plain-English prompt into a backtested strategy in under a minute; neither hands
-the user a code editor.
+سطر آخر تنها هزینه‌ی واقعی است. استراتژی‌های خرد در اکثریت قاطع به شرط‌هایی روی
+اندیکاتورها به‌همراه قواعد ریسک فروکاسته می‌شوند. محصول Capitalise.ai همین است:
+زبان طبیعی که به همین نوع مجموعه‌قواعد کامپایل می‌شود؛ و Composer یک پرامپت
+انگلیسی ساده را در کمتر از یک دقیقه به استراتژی بک‌تست‌شده تبدیل می‌کند. هیچ‌کدام
+به کاربر ادیتور کد نمی‌دهند.
 
-**Decision: declarative spec as the primary representation**, with a pooled
-sandboxed-code path as an explicit advanced tier.
+**تصمیم: مشخصات اعلانی به‌عنوان شکل اصلی نمایش**، به‌همراه یک مسیر کد در sandbox
+استخری به‌عنوان لایه‌ی پیشرفته‌ی صریح.
 
-### Spec shape
+### شکل مشخصات
 
 ```jsonc
 {
@@ -71,133 +70,131 @@ sandboxed-code path as an explicit advanced tier.
 }
 ```
 
-Roughly 800 bytes. Validates against a schema, renders as a sentence in any
-language, diffs cleanly when the AI proposes a change.
+تقریباً ۸۰۰ بایت. با schema اعتبارسنجی می‌شود، به یک جمله در هر زبانی رندر
+می‌شود، و وقتی AI تغییری پیشنهاد می‌دهد diff تمیزی می‌دهد.
 
 ---
 
-## 2. Runtime: compute indicators once, read them many times
+## ۲. زمان اجرا: اندیکاتور را یک بار حساب کن، چند بار بخوان
 
-Indicators live in a shared bus keyed by `(symbol, timeframe, indicator, params)`
-and are computed once per bar, then read by every bot that references them.
+اندیکاتورها در یک باس مشترک با کلید `(symbol, timeframe, indicator, params)`
+زندگی می‌کنند، در هر کندل یک بار محاسبه می‌شوند، و بعد هر رباتی که به آن‌ها ارجاع
+دارد فقط می‌خواندشان.
 
-Two properties make this cheap:
+دو خصیصه این را ارزان می‌کند:
 
-- **Incremental form.** An EMA update is one multiply and one add, not a pass
-  over 200 bars.
-- **Bar-close evaluation.** Stops, targets, trailing stops and stop-outs already
-  run tick-by-tick in the execution engine (`processTPSL`, `processTrailingStops`,
-  `processStopOuts`), so a strategy has nothing to do between bars.
+- **شکل افزایشی.** به‌روزرسانی EMA یک ضرب و یک جمع است، نه پیمایش روی ۲۰۰ کندل.
+- **ارزیابی در بسته‌شدن کندل.** حد ضرر، حد سود، trailing stop و stop-out از قبل
+  تیک‌به‌تیک در موتور اجرا می‌شوند (`processTPSL`، `processTrailingStops`،
+  `processStopOuts`)، پس استراتژی بین دو کندل کاری ندارد.
 
-### Scheduling
+### زمان‌بندی
 
-Bots are indexed by `(symbol, timeframe)`. When a bar closes, the aggregator
-updates that series' indicators once, then the interpreter walks only the bots
-registered on that key. No polling loop, no per-bot timer, no thread per bot.
+ربات‌ها با کلید `(symbol, timeframe)` اندیس می‌شوند. وقتی کندلی بسته می‌شود،
+تجمیع‌گر اندیکاتورهای آن سری را یک بار به‌روز می‌کند و بعد مفسر فقط ربات‌های
+ثبت‌شده روی همان کلید را می‌پیماید. نه حلقه‌ی polling، نه تایمر به‌ازای هر ربات،
+نه thread برای هر ربات.
 
-- A bot on 15m evaluates 4 times an hour, not 3,600.
-- A bot decides *whether to be in*, not how to manage a fill.
-- 200 bots on EUR/USD 15m cost one indicator update and 200 rule walks.
+- رباتی روی ۱۵ دقیقه در ساعت چهار بار ارزیابی می‌شود، نه ۳۶۰۰ بار.
+- ربات تصمیم می‌گیرد *داخل باشد یا نه*، نه اینکه یک فیل را چطور مدیریت کند.
+- ۲۰۰ ربات روی EUR/USD 15m هزینه‌شان یک به‌روزرسانی اندیکاتور و ۲۰۰ پیمایش قواعد است.
 
-### Capacity at 1,000 bots
+### ظرفیت با هزار ربات
 
-Assuming 50 instruments, 6 timeframes, 500 bars retained per series:
+فرض: ۵۰ نماد، ۶ تایم‌فریم، ۵۰۰ کندل نگه‌داشته‌شده در هر سری.
 
-| Component | Sizing | Memory |
+| مؤلفه | ابعاد | حافظه |
 |---|---|---|
-| Candle ring buffers | 50 × 6 × 500 bars × 6 floats | ~7 MB |
-| Indicator accumulators | 300 series × ~25 configs, O(1) state | ~0.8 MB |
-| Bot specifications | 1,000 × ~800 bytes | ~0.8 MB |
-| Per-bot runtime state | position ref, last signal, counters, cooldowns | ~0.5 MB |
-| **Total** | one process | **~9 MB** |
+| بافرهای حلقوی کندل | ۵۰ × ۶ × ۵۰۰ کندل × ۶ عدد اعشاری | ~۷ MB |
+| انباشتگرهای اندیکاتور | ۳۰۰ سری × ~۲۵ پیکربندی، state با O(1) | ~۰.۸ MB |
+| مشخصات ربات‌ها | ۱۰۰۰ × ~۸۰۰ بایت | ~۰.۸ MB |
+| وضعیت زمان اجرای هر ربات | ارجاع پوزیشن، آخرین سیگنال، شمارنده، cooldown | ~۰.۵ MB |
+| **جمع** | یک پروسه | **~۹ MB** |
 
-CPU: worst realistic case is every bot on 1m — 1,000 rule walks per minute. At a
-generous 100 µs each that is 0.1 s per minute, under 0.2% of one core.
+پردازنده: بدترین حالت واقع‌بینانه همه‌ی ربات‌ها روی ۱ دقیقه است — ۱۰۰۰ پیمایش
+قواعد در دقیقه. با فرض سخاوتمندانه‌ی ۱۰۰ میکروثانیه برای هر کدام، ۰.۱ ثانیه در
+دقیقه، یعنی زیر ۰.۲٪ یک هسته.
 
-**The real limit is orders, not bots.** A thousand bots firing on the same candle
-produce a thousand near-simultaneous executions, each writing to the database
-and, on live accounts, hitting the broker's 50-requests-per-second cap. Design
-the order queue and backpressure policy carefully; the strategy runtime is not
-the bottleneck.
+**محدودیت واقعی سفارش‌ها هستند، نه ربات‌ها.** هزار رباتی که روی یک کندل شلیک کنند
+هزار اجرای تقریباً هم‌زمان تولید می‌کنند که هر کدام در دیتابیس می‌نویسد و روی
+حساب لایو به سقف ۵۰ درخواست بر ثانیه‌ی بروکر می‌خورد. صف سفارش و سیاست backpressure
+را با دقت طراحی کنید؛ زمان اجرای استراتژی گلوگاه نیست.
 
-Consequences to build in early:
+پیامدهایی که از اول در نظر گرفته شوند:
 
-- One process now; the shard key is the symbol, so splitting later is mechanical.
-- Order queue with per-account fairness, so one user's twenty bots cannot starve
-  everyone else.
-- Cap the number of *distinct* symbol/timeframe series, not the number of bots.
-- Cold start is a table read plus indicator rebuild from stored candles.
-
----
-
-## 3. Custom code: the advanced tier
-
-Keep a code path for users who hit the grammar's ceiling, as a bounded pooled
-resource rather than the default.
-
-**Do not use `isolated-vm`.** A sandbox-escape flaw in its `ExternalCopy`
-component was disclosed in August 2026: code inside the sandbox can corrupt host
-memory and reach RCE. `node:vm` is not a sandbox and never was.
-
-**Use QuickJS compiled to WebAssembly.** User code runs in a WASM linear-memory
-space with no access to host memory, syscalls or APIs, so even memory corruption
-in the JS engine cannot cross the WASM boundary. The trade is execution speed,
-which is irrelevant for a function that runs once per bar.
-
-Keeping its cost bounded:
-
-- **Pool, do not allocate per bot.** ~8 interpreter instances serve every custom
-  bot in turn, so memory is a constant independent of user count.
-- **Pure function signature.** The bot receives a plain snapshot (candles,
-  indicator values, position state) and returns a plain signal object. No I/O,
-  no network, no clock, no randomness it did not receive as input.
-- **Step budget plus wall clock.** Exceeding either disables the bot with a
-  message rather than retrying.
-- **Determinism is the entry requirement** — otherwise backtest and live cannot
-  agree and the honesty grade is meaningless.
-- Reserve for paid tiers.
+- یک پروسه الان؛ کلید شاردینگ نماد است، پس تقسیم بعدی مکانیکی است.
+- صف سفارش با انصاف به‌ازای هر حساب، تا بیست ربات یک کاربر بقیه را گرسنه نگذارد.
+- سقف را روی تعداد سری‌های *متمایز* نماد/تایم‌فریم بگذارید، نه تعداد ربات.
+- cold start یک خواندن از جدول است به‌همراه بازسازی اندیکاتور از کندل ذخیره‌شده.
 
 ---
 
-## 4. Backtest and forward test
+## ۳. کد سفارشی: لایه‌ی پیشرفته
 
-Because the interpreter is shared, backtesting is not a second implementation:
-swap the live feed for stored candles and the wall clock for a bar counter. That
-removes the usual class of bug where a backtest uses information the live bot
-would not have had. Two rules still need deliberate enforcement:
+مسیر کد را برای کاربرانی که به سقف گرامر می‌خورند نگه دارید، به‌عنوان منبعی محدود
+و استخری نه حالت پیش‌فرض.
 
-- **No look-ahead.** A rule evaluated on a bar close sees that bar's close and no
-  part of the next.
-- **Real costs.** Fills on the correct side of the spread, commission per lot, and
-  overnight swap — all already computed by `services/pricing.ts`, so the backtest
-  inherits them rather than approximating.
+**`isolated-vm` را استفاده نکنید.** نقص فرار از sandbox در بخش `ExternalCopy` آن
+در آگوست ۲۰۲۶ منتشر شد: کد داخل sandbox می‌تواند حافظه‌ی host را تخریب کند و به
+RCE برسد. `node:vm` هم هرگز sandbox نبوده.
 
-### The honesty grade
+**از QuickJS کامپایل‌شده به WebAssembly استفاده کنید.** کد کاربر در فضای حافظه‌ی
+خطی WASM اجرا می‌شود، بدون دسترسی به حافظه‌ی host، syscall یا API — پس حتی تخریب
+حافظه در خود موتور JS نمی‌تواند از مرز WASM بگذرد. معامله‌اش سرعت اجراست، که برای
+تابعی که در هر کندل یک بار اجرا می‌شود بی‌اهمیت است.
 
-Score every backtest and show the score as prominently as the return:
+محدود نگه‌داشتن هزینه‌اش:
 
-1. **Out-of-sample split** — fit on the first 70% of history, report on the last 30%.
-2. **Sample size** — under ~30 trades, report "not enough evidence" rather than a win rate.
-3. **Parameter pressure** — free parameters against trade count; six tuned numbers over 40 trades is curve fitting.
-4. **Sensitivity** — perturb every parameter ±10%; collapse means the result sat on a knife edge.
-5. **Trade-order Monte Carlo** — reshuffle trade sequence ~1,000 times for a confidence band on drawdown.
-
-**A bot cannot go live until it has completed a forward test.** Backtests can be
-gamed; a forward run on unseen incoming data cannot. The simulated venue built in
-the engine work (`services/venues/`) is the right place to run it, so this costs
-almost nothing to add — and it doubles as a retention mechanic.
-
-This is also the most defensible position available: every rival claims their AI
-finds winning strategies. Being the platform that tells a user their strategy is
-overfitted is more useful and much harder to copy, because it requires being
-willing to disappoint the user.
+- **استخر، نه تخصیص به‌ازای هر ربات.** حدود ۸ نمونه‌ی مفسر به‌نوبت به همه‌ی
+  ربات‌های کدی سرویس می‌دهند، پس حافظه ثابت و مستقل از تعداد کاربر می‌ماند.
+- **امضای تابع خالص.** ربات یک snapshot ساده می‌گیرد (کندل، مقادیر اندیکاتور،
+  وضعیت پوزیشن) و یک شیء سیگنال ساده برمی‌گرداند. نه I/O، نه شبکه، نه ساعت، نه
+  تصادفی‌بودنی که به‌عنوان ورودی نگرفته باشد.
+- **بودجه‌ی گام + ساعت دیواری.** عبور از هر کدام ربات را با یک پیام غیرفعال
+  می‌کند، نه اینکه دوباره تلاش شود.
+- **جبرگرایی شرط ورود است** — وگرنه بک‌تست و لایو نمی‌توانند هم‌خوان باشند و
+  نمره‌ی صداقت بی‌معنا می‌شود.
+- مخصوص پلن‌های پولی.
 
 ---
 
-## 5. Custom indicators
+## ۴. بک‌تست و فوروارد تست
 
-A user-built indicator is an expression over price series and other indicators,
-producing a series — the same grammar one level down.
+چون مفسر مشترک است، بک‌تست یک پیاده‌سازی دوم نیست: فید زنده را با کندل ذخیره‌شده و
+ساعت دیواری را با شمارنده‌ی کندل عوض کنید. این کار آن دسته‌ی همیشگی از باگ‌ها را
+حذف می‌کند که بک‌تست از اطلاعاتی استفاده می‌کند که ربات زنده نداشته. دو قاعده هنوز
+باید عامدانه اعمال شوند:
+
+- **بدون نگاه به آینده.** قاعده‌ای که در بسته‌شدن کندل ارزیابی می‌شود، close همان
+  کندل را می‌بیند و هیچ بخشی از کندل بعدی را نه.
+- **هزینه‌های واقعی.** فیل روی سمت درست اسپرد، کمیسیون هر لات، و سواپ شبانه — که
+  `services/pricing.ts` همه را از قبل محاسبه می‌کند، پس بک‌تست به‌ارث می‌بردشان.
+
+### نمره‌ی صداقت
+
+به هر بک‌تست نمره بدهید و نمره را به همان برجستگیِ بازدهی نشان دهید:
+
+1. **تفکیک خارج‌از‌نمونه** — روی ۷۰٪ اول برازش، روی ۳۰٪ آخر گزارش.
+2. **حجم نمونه** — زیر حدود ۳۰ معامله، جای نرخ برد بنویس «شواهد کافی نیست».
+3. **فشار پارامتر** — پارامترهای آزاد در برابر تعداد معامله؛ شش عدد تنظیم‌شده روی ۴۰ معامله برازش منحنی است.
+4. **حساسیت** — هر پارامتر ±۱۰٪؛ فروریختن یعنی نتیجه روی لبه‌ی چاقو نشسته بوده.
+5. **مونت‌کارلوی ترتیب معاملات** — ~۱۰۰۰ بار بُر زدن ترتیب، برای بازه‌ی اطمینان drawdown.
+
+**ربات تا فوروارد تست را تمام نکرده نمی‌تواند لایو شود.** بک‌تست را می‌شود دستکاری
+کرد؛ اجرای رو به جلو روی داده‌ی نیامده را نه. venue شبیه‌سازی که در کار موتور
+ساخته شد (`services/venues/`) جای درست اجرای آن است، پس افزودنش تقریباً هیچ
+هزینه‌ای ندارد — و هم‌زمان یک سازوکار بازگشت روزانه هم می‌شود.
+
+این هم‌چنین قابل‌دفاع‌ترین موضع موجود است: هر رقیبی ادعا می‌کند AI‌اش استراتژی
+برنده پیدا می‌کند. بودن پلتفرمی که به کاربر می‌گوید استراتژی‌اش overfit است هم
+مفیدتر است هم کپی‌کردنش سخت‌تر، چون جرأت ناامید کردن کاربر را می‌خواهد.
+
+---
+
+## ۵. اندیکاتورهای سفارشی
+
+اندیکاتوری که کاربر می‌سازد یک عبارت روی سری‌های قیمت و اندیکاتورهای دیگر است که
+یک سری تولید می‌کند — همان گرامر، یک سطح پایین‌تر.
 
 ```jsonc
 {
@@ -214,180 +211,172 @@ producing a series — the same grammar one level down.
 }
 ```
 
-- **Any indicator can appear in any bot.** A custom indicator registers in the
-  same bus as the built-ins, so referencing it from a strategy needs no special
-  case.
-- **The chart is the shared surface.** Indicators, bot entries and exits,
-  backtest trade markers and the forward-test run all draw on the existing chart.
-  That screen becomes where everything is inspected.
+- **هر اندیکاتوری می‌تواند در هر رباتی بیاید.** اندیکاتور سفارشی در همان باسِ
+  اندیکاتورهای داخلی ثبت می‌شود، پس ارجاع به آن هیچ حالت خاصی لازم ندارد.
+- **چارت سطح مشترک است.** اندیکاتورها، ورود و خروج ربات، نشانگرهای معاملات
+  بک‌تست و اجرای فوروارد تست همه روی همان چارت موجود کشیده می‌شوند.
 
 ---
 
-## 6. The AI layer
+## ۶. لایه‌ی هوش مصنوعی
 
-### What exists today
+### وضعیت امروز
 
-`controllers/aiController.ts` builds a system prompt containing equity, free
-margin and a sentence per open position, then sends the conversation. That is a
-snapshot, and it caps what the assistant can be: it cannot answer "what is my
-worst hour of the day", "am I cutting winners early", or "how would this idea
-have done in 2020".
+`controllers/aiController.ts` یک system prompt می‌سازد شامل equity، مارجین آزاد و
+یک جمله برای هر پوزیشن باز، و بعد گفت‌وگو را می‌فرستد. این یک snapshot است و سقف
+آنچه دستیار می‌تواند باشد را تعیین می‌کند: نمی‌تواند به «بدترین ساعت روزم کدام
+است»، «آیا سودهایم را زود می‌بندم؟» یا «این ایده در ۲۰۲۰ چطور عمل می‌کرد؟» جواب
+بدهد.
 
-It was also filling that prompt from a private copy of the contract-size tables —
-the sixth in the codebase, and like the others it held no forex pair, so MaxAI
-stated account figures 100,000x out with total confidence. Now fixed to read
-`services/pricing.ts`. **The lesson generalises: the model must never compute a
-number, only report one a tool gave it.**
+آن prompt هم‌چنین از یک نسخه‌ی خصوصی از جدول‌های contract size پر می‌شد — ششمین
+نسخه در کل کد، و مثل بقیه هیچ جفت‌ارز فارکسی نداشت، پس MaxAI عددهای حساب را با
+ضریب ۱۰۰٬۰۰۰ غلط و با اطمینان کامل می‌گفت. حالا رفع شده و `services/pricing.ts`
+را می‌خواند. **درسش قابل تعمیم است: مدل هرگز نباید عددی را محاسبه کند، فقط عددی
+را که ابزار داده گزارش کند.**
 
-### Tool surface
+### سطح ابزارها
 
-| Tool | Answers |
+| ابزار | جواب می‌دهد به |
 |---|---|
-| `get_account` | balance, equity, margin, leverage |
-| `get_positions` | what is held and what it is doing |
-| `get_trade_history` | what I did last week / on this pair / after that loss |
-| `get_trade_stats` | win rate, expectancy, profit factor, drawdown — grouped by symbol, hour, weekday, session |
-| `get_candles`, `get_indicator` | what the market was doing at entry |
-| `get_quote` | current spread |
-| `run_backtest` | how would this idea have done |
-| `save_strategy`, `deploy_strategy` | build this bot, start a forward test |
-| `get_news`, `get_calendar` | what is moving this pair, what is due |
-| `propose_order` | **never executes** — returns a card the user must confirm |
+| `get_account` | موجودی، equity، مارجین، اهرم |
+| `get_positions` | چه چیزی باز است و چه می‌کند |
+| `get_trade_history` | هفته‌ی پیش / روی این جفت‌ارز / بعد از آن ضرر چه کردم |
+| `get_trade_stats` | نرخ برد، امید ریاضی، profit factor، drawdown — تفکیک به نماد، ساعت، روز هفته، سشن |
+| `get_candles`، `get_indicator` | وقتی وارد شدم بازار چه می‌کرد |
+| `get_quote` | اسپرد فعلی |
+| `run_backtest` | این ایده چطور عمل می‌کرد |
+| `save_strategy`، `deploy_strategy` | این ربات را بساز، فوروارد تست را شروع کن |
+| `get_news`، `get_calendar` | چه چیزی این جفت‌ارز را تکان می‌دهد، چه در راه است |
+| `propose_order` | **هرگز اجرا نمی‌کند** — کارتی برمی‌گرداند که کاربر باید تأیید کند |
 
-### Numbers must be traceable
+### عددها باید ردیابی‌پذیر باشند
 
-The widget mechanism already in the code — a JSON block appended to the reply and
-rendered by the client — is the right instinct and should become the *only* way
-figures reach the screen. A metric rendered from a tool result has nowhere for a
-hallucinated number to appear. Prose explains; structured blocks carry the
-arithmetic.
+سازوکار ویجت که از قبل در کد هست — بلوک JSON که به پاسخ اضافه و توسط کلاینت رندر
+می‌شود — حس درستی است و باید *تنها* راهی شود که عددها به صفحه می‌رسند. متریکی که
+از نتیجه‌ی ابزار رندر می‌شود جایی برای ظاهر شدن عدد توهمی ندارد. نوشتار توضیح
+می‌دهد؛ بلوک‌های ساخت‌یافته حساب‌وکتاب را حمل می‌کنند.
 
-**Remove the confidence score.** The current prompt asks for `"confidence": 90`
-alongside a trade setup. A language model's self-reported confidence in a trade
-is not a probability of anything, and users will read it as one. Replace with the
-backtested win rate of the setup and its sample size, or show nothing.
+**نمره‌ی اطمینان را حذف کنید.** prompt فعلی کنار هر ستاپ `"confidence": 90`
+می‌خواهد. اطمینانِ خودگزارش‌شده‌ی یک مدل زبانی در یک معامله احتمالِ هیچ چیزی
+نیست، و کاربر آن را احتمال می‌خواند. جایش نرخ برد بک‌تست‌شده‌ی آن ستاپ به‌همراه
+حجم نمونه، یا هیچ چیزی.
 
-### Strategy authoring loop
+### حلقه‌ی نوشتن استراتژی
 
-1. User describes an idea in their own words.
-2. Model emits a strategy spec as JSON, constrained by the schema.
-3. Validation runs; errors go back to the model, bounded retries.
-4. A backtest runs automatically, with the honesty grade.
-5. User sees the rules in plain language, the equity curve and the grade — then a
-   button to start a forward test.
+۱. کاربر ایده‌اش را با کلمات خودش توصیف می‌کند.
+۲. مدل مشخصات را به‌صورت JSON و محدود به schema بیرون می‌دهد.
+۳. اعتبارسنجی اجرا می‌شود؛ خطاها به مدل برمی‌گردند، تلاش مجدد محدود.
+۴. بک‌تست خودکار اجرا می‌شود، با نمره‌ی صداقت.
+۵. کاربر قواعد را به زبان معمولی، نمودار equity و نمره را می‌بیند — و بعد دکمه‌ی
+   شروع فوروارد تست.
 
-The user never sees an untested strategy, and never sees one that does not run.
-Both properties come free from the spec being data.
+کاربر هرگز استراتژی تست‌نشده یا استراتژی‌ای که اجرا نمی‌شود نمی‌بیند. هر دو خصیصه
+مجانی از داده‌بودنِ مشخصات می‌آیند.
 
-### Cost control
+### کنترل هزینه
 
-- **Cache the static prefix.** System prompt and tool definitions are identical
-  every call and are the largest fixed cost.
-- **Tier the models.** A small fast model routes intent and handles lookups; the
-  strong model handles analysis and strategy authoring.
-- **Precompute statistics.** `get_trade_stats` reads a rollup updated when a
-  trade closes, not an aggregate over full history per question.
-- **Stream.** Perceived latency is most of the felt quality.
-
----
-
-## 7. Product surface, ranked
-
-The differentiator is not the feature list — every platform ships bots,
-backtests and a chat box. It is being useful in the moments a trader is already
-emotionally engaged.
-
-**Cheap, high impact**
-
-- **Trade DNA** — behavioural profile from their own closed trades: revenge
-  trading after a loss, cutting winners early, worst hour and weekday, size creep
-  after a win. Uses only stored data. The most shareable thing on this list.
-- **"Why did this lose?"** — one tap on a closed trade; the AI pulls candles and
-  indicators around entry and exit and explains. A loss is when a trader most
-  wants an explanation and is least likely to get one.
-- **Alerts that say why** — not "RSI crossed 30" but "RSI crossed 30 while price
-  swept the Asian low — the setup your London reversion bot waits for".
-
-**Medium effort**
-
-- **A bot from your own trades** — infer the strategy the user is implicitly
-  running, write it as a spec, backtest it. Shows them their own edge, with
-  evidence.
-- **Bot versus you** — a bot in forward test on the same instrument the user
-  trades by hand, scored side by side. Gives the forward-test gate a reason to
-  exist beyond safety.
-- **Idea to bot in under a minute** — the demo that sells the product; worth
-  optimising latency for specifically.
-
-**Bigger build**
-
-- **Strategy library with real track records** — published bots browsable with
-  their *forward-test* record rather than a backtest, so the leaderboard cannot be
-  gamed by curve fitting. Composer's community holds thousands of strategies and
-  is their strongest retention surface.
-- **Replay mode** — scrub the chart back and trade forward bar by bar against a
-  bot on the same data. Reuses the backtest clock that has to exist anyway.
-
-The thread through the strong ones: they use the trader's *own* data to tell them
-something they did not know about themselves. Market commentary is a commodity.
-A mirror is not.
+- **پیشوند ثابت را کش کنید.** system prompt و تعریف ابزارها در هر فراخوانی یکسان
+  و بزرگ‌ترین هزینه‌ی ثابت‌اند.
+- **مدل‌ها را لایه‌بندی کنید.** مدل کوچک و سریع برای مسیریابی نیت و جست‌وجوهای
+  ساده؛ مدل قوی برای تحلیل و نوشتن استراتژی.
+- **آمار را پیش‌محاسبه کنید.** `get_trade_stats` یک rollup را بخواند که با بسته
+  شدن معامله به‌روز می‌شود، نه اینکه در هر سؤال کل تاریخ را جمع بزند.
+- **استریم کنید.** تأخیر ادراک‌شده بیشترِ کیفیت حس‌شده است.
 
 ---
 
-## 8. Risks
+## ۷. سطح محصول، مرتب‌شده
 
-| Risk | Note |
+تفاوت‌ساز فهرست قابلیت‌ها نیست — هر پلتفرمی ربات و بک‌تست و باکس چت دارد. مفید
+بودن در لحظه‌هایی است که تریدر از قبل درگیر احساسی شده.
+
+**ارزان، پرتأثیر**
+
+- **DNA معاملاتی** — پروفایل رفتاری از معاملات بسته‌شده‌ی خودش: revenge trading
+  بعد از ضرر، بستن زودِ سودها، بدترین ساعت و روز هفته، بزرگ شدن حجم بعد از برد.
+  فقط از داده‌ی ذخیره‌شده. اشتراک‌گذاری‌پذیرترین چیز این فهرست.
+- **«چرا این ضرر داد؟»** — یک تپ روی معامله‌ی بسته‌شده؛ AI کندل و اندیکاتور
+  اطراف ورود و خروج را می‌کشد و توضیح می‌دهد. ضرر لحظه‌ای است که تریدر بیشترین
+  نیاز به توضیح را دارد و کمترین شانس گرفتنش را.
+- **هشدارهایی که دلیل می‌گویند** — نه «RSI از ۳۰ گذشت» بلکه «RSI از ۳۰ گذشت در
+  حالی که قیمت کفِ سشن آسیا را جارو کرد — همان ستاپی که ربات بازگشتی لندنِ تو
+  منتظرش است».
+
+**تلاش متوسط**
+
+- **یک ربات از معاملات خودت** — استراتژی‌ای که کاربر تلویحاً اجرا می‌کند را
+  استنباط کن، به‌صورت مشخصات بنویس، بک‌تستش کن. لبه‌ی خودش را با شواهد نشانش
+  می‌دهد.
+- **ربات در برابر تو** — رباتی در فوروارد تست روی همان نمادی که کاربر دستی
+  معامله می‌کند، امتیاز کنار هم. به شرط فوروارد تست دلیلی بیشتر از ایمنی می‌دهد.
+- **از ایده تا ربات، زیر یک دقیقه** — دموی فروش محصول؛ ارزش دارد تأخیرش را
+  به‌طور خاص بهینه کنید.
+
+**ساخت بزرگ‌تر**
+
+- **کتابخانه‌ی استراتژی با سابقه‌ی واقعی** — ربات‌های منتشرشده و قابل مرور با
+  سابقه‌ی *فوروارد تست* نه بک‌تست، تا جدول برترین‌ها با برازش منحنی قابل دستکاری
+  نباشد. جامعه‌ی Composer هزاران استراتژی دارد و قوی‌ترین سطح نگه‌داشتشان است.
+- **حالت بازپخش** — چارت را عقب بکش و کندل‌به‌کندل رو به جلو معامله کن، در برابر
+  رباتی روی همان داده. از همان ساعت بک‌تست استفاده می‌کند.
+
+رشته‌ی مشترک ایده‌های قوی: از داده‌ی *خودِ* تریدر چیزی به او می‌گویند که درباره‌ی
+خودش نمی‌دانست. تحلیل بازار کالای عمومی است. آینه نه.
+
+---
+
+## ۸. ریسک‌ها
+
+| ریسک | یادداشت |
 |---|---|
-| **Signals look like investment advice** | An AI emitting "BUY BTC, entry 62000, confidence 90" is close to regulated advice in many jurisdictions, and the confidence figure makes it worse. Needs disclaimers, no performance claims, jurisdiction awareness. |
-| **An AI-written bot losing real money** | The forward-test gate is the mitigation and should be mandatory on live accounts with no override. Default live deployments to minimum volume. |
-| **User code escaping the sandbox** | Why the recommendation is QuickJS-in-WASM, not `isolated-vm`. Revisit on every runtime upgrade. |
-| **Token spend per conversation** | Tool use multiplies calls per turn. Without caching, precomputed stats and model tiering, an engaged user becomes unprofitable. |
-| **One wrong number costs the feature** | The forex bug already had MaxAI stating figures 100,000x out. A trader who catches the assistant confidently wrong once will not trust it again. |
-| **Order storms** | A thousand bots is a rounding error; a thousand bots firing on one candle is a queueing and broker-rate-limit problem. |
+| **سیگنال شبیه مشاوره‌ی سرمایه‌گذاری است** | «BUY BTC، ورود ۶۲۰۰۰، اطمینان ۹۰» در بسیاری از حوزه‌های قضایی نزدیک به مشاوره‌ی مالی تحت مقررات است، و عدد اطمینان بدترش می‌کند. نیازمند سلب مسئولیت، بدون ادعای عملکرد، آگاهی از حوزه‌ی قضایی. |
+| **رباتی که AI نوشته و پول واقعی از دست می‌دهد** | شرط فوروارد تست کاهنده است و روی حساب لایو باید اجباری و بدون دور زدن باشد. اجرای لایو پیش‌فرض با حداقل حجم. |
+| **فرار کد کاربر از sandbox** | دلیل اینکه پیشنهاد QuickJS روی WASM است نه `isolated-vm`. در هر ارتقای runtime بازبینی شود. |
+| **مصرف توکن در هر گفت‌وگو** | ابزارها تعداد فراخوانی در هر نوبت را چند برابر می‌کنند. بدون کش، آمار پیش‌محاسبه‌شده و لایه‌بندی مدل، کاربر درگیر غیرسودده می‌شود. |
+| **یک عدد غلط، هزینه‌اش کل قابلیت است** | باگ فارکس باعث شده بود MaxAI عددها را ۱۰۰٬۰۰۰ برابر غلط بگوید. تریدری که یک بار دستیار را با اطمینان کامل در حال غلط گفتن بگیرد، دیگر اعتماد نمی‌کند. |
+| **طوفان سفارش** | هزار ربات یک خطای گردکردن است؛ هزار ربات روی یک کندل یک مسئله‌ی صف و سقف نرخ بروکر است. |
 
 ---
 
-## 9. Build order
+## ۹. ترتیب ساخت
 
-Each stage depends on the one before it. None of it needs the broker feed to be
-live, so it can proceed in parallel with the cTrader integration.
+هر مرحله به مرحله‌ی قبلش وابسته است. هیچ‌کدام به زنده بودن فید بروکر نیاز ندارند،
+پس موازی با یکپارچه‌سازی cTrader پیش می‌روند.
 
-1. **Strategy schema and interpreter** — the grammar, its JSON Schema, and the
-   evaluator. Everything else is downstream. Testable with stored candles and no
-   feed, the same way the engine maths was tested.
-2. **Indicator bus** — incremental indicators keyed by symbol/timeframe/params,
-   plus the bar aggregator. Where the thousand-bot economics are won or lost.
-3. **Backtest engine and honesty grade** — the interpreter on a bar clock with
-   real spread, commission and swap, plus the five scoring checks. The first thing
-   a user can feel, and the safety gate everything after depends on.
-4. **Forward test on the simulated venue** — mostly wiring; the venue exists.
-   Unlocks the live gate and the daily-return habit.
-5. **AI tool layer** — replace prompt-stuffing with typed tools, structured number
-   rendering, prompt caching, model tiering.
-6. **Strategy authoring loop** — plain English to validated spec to automatic
-   backtest to graded result. The demo moment.
-7. **Trade DNA and trade post-mortems** — highest engagement per unit of work on
-   the list, and only needs the tool layer.
-8. **Custom indicators, then the QuickJS tier** — last, because the grammar has to
-   prove its ceiling before it is worth escaping, and the sandbox is the only part
-   with a security surface.
+۱. **schema و مفسر استراتژی** — گرامر، JSON Schema، و ارزیاب. همه‌چیز دیگر
+   پایین‌دستِ این است. با کندل ذخیره‌شده و بدون فید قابل تست، همان‌طور که ریاضیات
+   موتور تست شد.
+۲. **باس اندیکاتور** — اندیکاتورهای افزایشی با کلید نماد/تایم‌فریم/پارامتر،
+   به‌همراه تجمیع‌گر کندل. جایی که اقتصاد هزار ربات برده یا باخته می‌شود.
+۳. **موتور بک‌تست و نمره‌ی صداقت** — همان مفسر روی ساعت کندلی با اسپرد، کمیسیون و
+   سواپ واقعی، به‌همراه پنج بررسی امتیازدهی. اولین چیزی که کاربر حس می‌کند، و
+   دروازه‌ی ایمنی مراحل بعد.
+۴. **فوروارد تست روی venue شبیه‌سازی** — بیشترش سیم‌کشی است؛ venue وجود دارد.
+   دروازه‌ی لایو و عادت بازگشت روزانه را باز می‌کند.
+۵. **لایه‌ی ابزار AI** — جای prompt-stuffing را با ابزارهای تایپ‌شده، رندر
+   ساخت‌یافته‌ی عددها، prompt caching و لایه‌بندی مدل بگیرید.
+۶. **حلقه‌ی نوشتن استراتژی** — از زبان معمولی به مشخصات اعتبارسنجی‌شده به بک‌تست
+   خودکار به نتیجه‌ی نمره‌دار. لحظه‌ی دمو.
+۷. **DNA معاملاتی و کالبدشکافی معاملات** — بیشترین درگیری به‌ازای هر واحد کار، و
+   فقط به لایه‌ی ابزار نیاز دارد.
+۸. **اندیکاتور سفارشی، بعد لایه‌ی QuickJS** — آخر، چون گرامر باید اول سقفش را
+   ثابت کند، و sandbox تنها بخشی است که سطح حمله‌ی امنیتی دارد.
 
-### One thing to decide before stage 1
+### یک تصمیم قبل از مرحله‌ی ۱
 
-How wide the grammar goes. Every construct added is one the AI must generate
-correctly, the interpreter must evaluate, the backtest must reproduce, and the
-plain-language renderer must describe. Starting narrow — comparisons, crossovers,
-logical composition, one higher-timeframe reference, session and spread filters,
-ATR-based risk — covers a surprising share of real strategies and can grow from
-evidence rather than guesswork.
+اینکه گرامر چقدر پهن باشد. هر construct که اضافه می‌کنید یکی است که AI باید درست
+تولیدش کند، مفسر ارزیابی‌اش کند، بک‌تست بازتولیدش کند و رندرکننده‌ی زبان طبیعی
+توصیفش کند. باریک شروع کردن — مقایسه، تلاقی، ترکیب منطقی، یک ارجاع به تایم‌فریم
+بالاتر، فیلتر سشن و اسپرد، و ریسک بر پایه‌ی ATR — سهم شگفت‌آوری از استراتژی‌های
+واقعی را پوشش می‌دهد و می‌تواند بر پایه‌ی شواهد رشد کند نه حدس.
 
 ---
 
-## Sources
+## منابع
 
-- [isolated-vm sandbox escape, August 2026](https://thehackernews.com/2026/08/isolated-vm-flaw-lets-sandboxed.html)
-- [QuickJS/WASM sandboxing comparison](https://github.com/formio/vm)
-- [JavaScript sandboxing research](https://github.com/simonw/research/tree/main/javascript-sandboxing-research)
-- [Pine Script alerts run server-side on realtime bars](https://www.tradingview.com/pine-script-docs/concepts/alerts/)
-- [Composer: plain-English to backtested strategy](https://www.businesswire.com/news/home/20251021050436/en/Composer-Supercharges-Investing-Platform-with-New-Trade-With-AI-Tool)
-- [No-code strategy builders, 2026 survey](https://crypto.news/top-9-no-code-ai-trading-apps-for-beginners-in-2026/)
+- [فرار از sandbox در isolated-vm، آگوست ۲۰۲۶](https://thehackernews.com/2026/08/isolated-vm-flaw-lets-sandboxed.html)
+- [مقایسه‌ی sandbox با QuickJS/WASM](https://github.com/formio/vm)
+- [پژوهش sandboxing جاوااسکریپت](https://github.com/simonw/research/tree/main/javascript-sandboxing-research)
+- [هشدارهای Pine Script روی سرور و در کندل زنده اجرا می‌شوند](https://www.tradingview.com/pine-script-docs/concepts/alerts/)
+- [Composer: از زبان معمولی به استراتژی بک‌تست‌شده](https://www.businesswire.com/news/home/20251021050436/en/Composer-Supercharges-Investing-Platform-with-New-Trade-With-AI-Tool)
+- [مرور سازنده‌های استراتژی بدون کد، ۲۰۲۶](https://crypto.news/top-9-no-code-ai-trading-apps-for-beginners-in-2026/)
