@@ -358,3 +358,56 @@ export const buildBot = async (req: AuthRequest, res: Response) => {
         res.status(500).json({ success: false, error: e.message });
     }
 };
+
+/**
+ * CHART FEED — everything the chart needs to draw a bot's activity:
+ * its closed trades (entry/exit anchors), the live position's levels
+ * (entry/SL/TP lines), and the spec's indicators.
+ */
+export const getBotChart = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+        const all = (await Position.find({ userId: req.user!.id }) as any[]).filter(p => p.botId === row.id);
+
+        const trades = all
+            .filter(p => p.status === 'CLOSED' && p.closeTime)
+            .map(p => ({
+                side: p.side,
+                volume: p.volume,
+                entryTime: p.openTime ? new Date(p.openTime).getTime() : null,
+                entryPrice: p.entryPrice,
+                exitTime: new Date(p.closeTime).getTime(),
+                exitPrice: p.closePrice,
+                netProfit: p.finalProfit ?? 0,
+            }))
+            .filter(t => t.entryTime && Number.isFinite(t.entryPrice) && Number.isFinite(t.exitPrice));
+
+        const openRow = all.find(p => p.status === 'OPEN');
+        const open = openRow ? {
+            side: openRow.side,
+            volume: openRow.volume,
+            entryPrice: openRow.entryPrice,
+            stopLoss: openRow.stopLoss ?? null,
+            takeProfit: openRow.takeProfit ?? null,
+            openTime: openRow.openTime ? new Date(openRow.openTime).getTime() : null,
+        } : null;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                botId: row.id,
+                name: row.name,
+                symbol: row.spec.symbol,
+                timeframe: row.spec.timeframe,
+                indicators: Object.entries(row.spec.indicators ?? {}).map(([name, def]) => ({ name, def })),
+                trades,
+                open,
+            },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};

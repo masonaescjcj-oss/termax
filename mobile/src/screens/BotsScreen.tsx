@@ -19,7 +19,7 @@ import { Text, TextInput } from '../components/Typography';
 import axios from 'axios';
 import {
     Bot as BotIcon, ChevronLeft, Play, Square, Trash2, Plus, Sparkles,
-    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket,
+    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -456,7 +456,19 @@ export default function BotsScreen({ navigation }) {
         const d = report;
         return (
             <>
-                <Header title={d?.bot?.name ?? 'Report'} onBack={() => { setView('list'); loadBots(true); }} />
+                <Header
+                    title={d?.bot?.name ?? 'Report'}
+                    onBack={() => { setView('list'); loadBots(true); }}
+                    right={d ? (
+                        <TouchableOpacity
+                            style={styles.chartBtn}
+                            onPress={() => navigation.navigate('MainTabs', { screen: 'Chart', params: { symbol: d.bot.symbol, botId: d.bot.id, ts: Date.now() } })}
+                        >
+                            <LineChart color={colors.primary} size={16} />
+                            <Text style={[styles.actionBtnText, { color: colors.primary }]}>Chart</Text>
+                        </TouchableOpacity>
+                    ) : null}
+                />
                 <ScrollView contentContainerStyle={styles.listContent}>
                     {reportLoading || !d ? (
                         <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />
@@ -622,6 +634,10 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     rulesBox: { marginTop: 8 },
     ruleLine: { fontSize: 13, color: colors.text, lineHeight: 22, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 },
 
+    chartBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7,
+        borderRadius: 18, backgroundColor: 'rgba(41,98,255,0.12)',
+    },
     gradeBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
     gradeBadgeText: { color: '#FFF', fontSize: 14, fontWeight: '800' },
     gradeScoreText: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' },

@@ -231,6 +231,19 @@ const DRAWING_TOOLS: Record<string, any[]> = {
   ]
 };
 
+/** StrategySpec indicator -> klinecharts built-in, with the spec's params. */
+const mapSpecIndicator = (def: any): { name: string; isMain: boolean; calcParams: number[] } | null => {
+    switch (def?.type) {
+        case 'SMA': return { name: 'MA', isMain: true, calcParams: [def.period ?? 20] };
+        case 'EMA': return { name: 'EMA', isMain: true, calcParams: [def.period ?? 20] };
+        case 'RSI': return { name: 'RSI', isMain: false, calcParams: [def.period ?? 14] };
+        case 'MACD': return { name: 'MACD', isMain: false, calcParams: [def.fast ?? 12, def.slow ?? 26, def.signal ?? 9] };
+        case 'BBANDS': return { name: 'BOLL', isMain: true, calcParams: [def.period ?? 20, def.mult ?? 2] };
+        case 'STOCH': return { name: 'KDJ', isMain: false, calcParams: [def.kPeriod ?? 14, def.dPeriod ?? 3, 3] };
+        default: return null; // ATR / HIGHEST / LOWEST have no chart builtin
+    }
+};
+
 const INTERVALS = [
   { label: '1H', value: '1h' },
   { label: '4H', value: '4h' },
@@ -252,7 +265,7 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
         .watermark svg { width: 100px; height: 100px; opacity: 0.05; margin-bottom: 20px; }
         .watermark div { font-size: 32px; letter-spacing: 12px; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/klinecharts/dist/klinecharts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.10/dist/umd/klinecharts.min.js"></script>
 </head>
 <body>
     <div class="watermark">
@@ -332,6 +345,60 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
                         }
                     ];
                 }
+            }
+        });
+
+        // Bot trade: entry -> exit, colored by outcome. Two anchored points.
+        klinecharts.registerOverlay({
+            name: 'botTrade',
+            totalStep: 3,
+            needDefaultPointFigure: false,
+            needDefaultXAxisFigure: false,
+            needDefaultYAxisFigure: false,
+            createPointFigures: ({ overlay, coordinates }) => {
+                if (coordinates.length < 2) return [];
+                const t = overlay.extendData || {};
+                const upColor = (window.chartTheme && window.chartTheme.upColor) || '#089981';
+                const downColor = (window.chartTheme && window.chartTheme.downColor) || '#F23645';
+                const win = (t.netProfit || 0) >= 0;
+                const lineColor = win ? upColor : downColor;
+                const entry = coordinates[0];
+                const exit = coordinates[1];
+                const isBuy = t.side === 'BUY';
+                const figures = [
+                    { type: 'line', attrs: { coordinates: [entry, exit] },
+                      styles: { style: 'dashed', color: lineColor, size: 1.5, dashedValue: [4, 3] } },
+                    { type: 'polygon', attrs: { coordinates: isBuy
+                        ? [ { x: entry.x, y: entry.y - 4 }, { x: entry.x - 5, y: entry.y + 6 }, { x: entry.x + 5, y: entry.y + 6 } ]
+                        : [ { x: entry.x, y: entry.y + 4 }, { x: entry.x - 5, y: entry.y - 6 }, { x: entry.x + 5, y: entry.y - 6 } ] },
+                      styles: { style: 'fill', color: isBuy ? upColor : downColor } },
+                    { type: 'circle', attrs: { x: exit.x, y: exit.y, r: 4 },
+                      styles: { style: 'fill', color: lineColor } },
+                    { type: 'text', attrs: { x: exit.x, y: exit.y - 12, text: (win ? '+' : '') + Number(t.netProfit || 0).toFixed(1), align: 'center', baseline: 'bottom' },
+                      styles: { color: '#FFFFFF', backgroundColor: lineColor, borderRadius: 4, paddingLeft: 5, paddingRight: 5, paddingTop: 2, paddingBottom: 2, size: 10, weight: 'bold', family: '-apple-system, system-ui, sans-serif' } },
+                ];
+                return figures;
+            }
+        });
+
+        // Bot level: a horizontal line (entry / SL / TP) with a right-edge tag.
+        klinecharts.registerOverlay({
+            name: 'botLevel',
+            totalStep: 2,
+            needDefaultPointFigure: false,
+            needDefaultXAxisFigure: false,
+            needDefaultYAxisFigure: false,
+            createPointFigures: ({ overlay, coordinates, bounding }) => {
+                if (!coordinates.length) return [];
+                const d = overlay.extendData || {};
+                const y = coordinates[0].y;
+                const color = d.color || '#888';
+                return [
+                    { type: 'line', attrs: { coordinates: [ { x: 0, y: y }, { x: bounding.width, y: y } ] },
+                      styles: { style: 'dashed', color: color, size: 1, dashedValue: [6, 4] } },
+                    { type: 'text', attrs: { x: bounding.width - 6, y: y - 4, text: d.label || '', align: 'right', baseline: 'bottom' },
+                      styles: { color: '#FFFFFF', backgroundColor: color, borderRadius: 4, paddingLeft: 6, paddingRight: 6, paddingTop: 2, paddingBottom: 2, size: 10, weight: 'bold', family: '-apple-system, system-ui, sans-serif' } },
+                ];
             }
         });
 
@@ -842,7 +909,10 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
                         updateAIZones();
                         updateAITrends();
                     } else {
-                        chart.createIndicator(data.name, data.isMain, { id: data.isMain ? 'candle_pane' : 'pane_' + data.name });
+                        const indArg = Array.isArray(data.calcParams) && data.calcParams.length
+                            ? { name: data.name, calcParams: data.calcParams }
+                            : data.name;
+                        chart.createIndicator(indArg, data.isMain, { id: data.isMain ? 'candle_pane' : 'pane_' + data.name });
                     }
                 } else if (data.type === 'removeIndicator') {
                     if (['AI_SIGNALS', 'AI_ZONES', 'AI_TREND'].includes(data.name)) {
@@ -853,6 +923,36 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
                     } else {
                         const paneId = data.isMain ? 'candle_pane' : 'pane_' + data.name;
                         chart.removeIndicator(paneId, data.name);
+                    }
+                } else if (data.type === 'botTrades') {
+                    try { chart.removeOverlay({ groupId: 'botTrades' }); } catch(e) {}
+                    (data.trades || []).forEach(function(t) {
+                        chart.createOverlay({
+                            name: 'botTrade', groupId: 'botTrades', lock: true,
+                            points: [
+                                { timestamp: t.entryTime, value: t.entryPrice },
+                                { timestamp: t.exitTime, value: t.exitPrice }
+                            ],
+                            extendData: t
+                        });
+                    });
+                } else if (data.type === 'botLevels') {
+                    try { chart.removeOverlay({ groupId: 'botLevels' }); } catch(e) {}
+                    const o = data.open;
+                    if (o) {
+                        const upColor = (window.chartTheme && window.chartTheme.upColor) || '#089981';
+                        const downColor = (window.chartTheme && window.chartTheme.downColor) || '#F23645';
+                        const mk = function(value, label, color) {
+                            if (typeof value !== 'number' || !(value > 0)) return;
+                            chart.createOverlay({
+                                name: 'botLevel', groupId: 'botLevels', lock: true,
+                                points: [{ timestamp: o.openTime || Date.now(), value: value }],
+                                extendData: { label: label, color: color }
+                            });
+                        };
+                        mk(o.entryPrice, (o.side === 'BUY' ? 'LONG ' : 'SHORT ') + (o.volume || '') + ' @ ' + o.entryPrice, '#2962FF');
+                        mk(o.stopLoss, 'SL ' + o.stopLoss, downColor);
+                        mk(o.takeProfit, 'TP ' + o.takeProfit, upColor);
                     }
                 } else if (data.type === 'changeTheme') {
                     window.chartTheme = data.theme;
@@ -1020,6 +1120,58 @@ export default function ChartScreen({ navigation, route }: any) {
       setSymbol(route.params.symbol);
     }
   }, [route?.params?.symbol]);
+
+  // A bot arrived via navigation (report screen's "View on chart"): draw its
+  // trades, live levels and spec indicators once the (possibly reloaded)
+  // chart is ready. Messages are deferred until chartReady so a symbol
+  // switch cannot swallow them mid-reload.
+  useEffect(() => {
+    const botId = route?.params?.botId;
+    if (!botId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const token = await getItemAsync('accessToken');
+        const res = await axios.get(`${BACKEND_URL}/api/v1/bots/${botId}/chart`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const d = res.data?.data;
+        if (!d || cancelled) return;
+
+        const needsSymbolSwitch = d.symbol && d.symbol !== symbol;
+        if (needsSymbolSwitch) setSymbol(d.symbol);
+
+        const send = () => {
+          if (cancelled) return;
+          sendMessageToChart(JSON.stringify({ type: 'botTrades', trades: d.trades ?? [] }));
+          sendMessageToChart(JSON.stringify({ type: 'botLevels', open: d.open ?? null }));
+          for (const ind of d.indicators ?? []) {
+            const mapped = mapSpecIndicator(ind.def);
+            if (mapped) {
+              sendMessageToChart(JSON.stringify({ type: 'addIndicator', name: mapped.name, isMain: mapped.isMain, calcParams: mapped.calcParams }));
+            }
+          }
+        };
+
+        if (!needsSymbolSwitch) {
+          send();
+        } else {
+          // Wait out the reload: ready flag drops, then rises again.
+          let tries = 0;
+          const timer = setInterval(() => {
+            tries++;
+            if (cancelled || tries > 50) { clearInterval(timer); return; }
+            if (chartReadyRef.current) { clearInterval(timer); send(); }
+          }, 300);
+        }
+      } catch (e) {
+        console.log('[Chart] Could not load bot activity', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [route?.params?.botId, route?.params?.ts]);
 
   // Load saved chart color theme on mount
   useEffect(() => {
