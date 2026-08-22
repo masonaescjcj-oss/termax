@@ -96,6 +96,19 @@ the liquidation loop — two database round trips per position. Fine for tens of
 accounts, not for thousands. Cache account state per tick, or move stop-out onto
 an in-memory account ledger that the tick loop updates.
 
+This is now the highest-priority item on this list. On a single small server it
+is not only a latency problem in the path that fires stop losses, it is also the
+main consumer of Supabase's free-tier egress allowance. See
+`docs/ai-architecture.md`, section 3, rule 5.
+
+### 5b. Price fan-out is not batched
+
+`sockets/marketSocket.ts` emits one message per symbol per second to every
+subscribed socket. 300 users watching 20 symbols each is 6,000 messages per
+second, where one batched message per client per interval would be 300. Twenty
+times the CPU and bandwidth for no benefit — the UI cannot use updates faster
+than roughly 4 Hz. Same section, rule 2.
+
 ### 6. Partial closes on a live account
 
 `closeLivePosition` sends a partial volume to the broker and mirrors whatever
