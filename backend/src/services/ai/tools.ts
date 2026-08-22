@@ -30,6 +30,8 @@ import { createIndicator } from '../strategy/indicators';
 import { validateSpec } from '../strategy/validate';
 import { Bar, TIMEFRAMES, Timeframe } from '../strategy/types';
 import { venueKindForAccount } from '../venues';
+import { computeTradeDna } from '../insights/tradeDna';
+import { runAutopsy } from '../insights/autopsy';
 import { getTradeStats } from './statsRollup';
 
 export interface AiTool {
@@ -332,6 +334,60 @@ export const AI_TOOLS: AiTool[] = [
             }
             await Bot.setStatus(row.id, 'FORWARD_TEST');
             return { botId: row.id, status: 'FORWARD_TEST' };
+        },
+    },
+    {
+        name: 'get_trade_dna',
+        description: 'The user\'s behavioural trading profile, computed from their own closed manual trades: revenge trading, cutting winners early, worst/best hour and weekday, sizing up after losses, overtrading bursts. Findings come with evidence numbers — report those, never invent patterns.',
+        parameters: { type: 'object', properties: {} },
+        async execute(userId) {
+            const rows = (await Position.find({ userId, status: 'CLOSED' }) as any[]);
+            const trades = rows
+                .filter(p => !p.botId && p.openTime && p.closeTime)
+                .map(p => ({
+                    symbol: p.symbol, side: p.side,
+                    volume: Number(p.volume) || 0,
+                    netProfit: Number(p.finalProfit) || 0,
+                    openTime: new Date(p.openTime).getTime(),
+                    closeTime: new Date(p.closeTime).getTime(),
+                }));
+            const profile = computeTradeDna(trades);
+            // The model gets the findings and buckets, not the raw trades.
+            return {
+                trades: profile.trades,
+                findings: profile.findings.map(f => ({ key: f.key, severity: f.severity, summary: f.en, evidence: f.evidence })),
+                hourly: profile.hourly.filter(b => b.trades > 0),
+                weekdays: profile.weekdays.filter(b => b.trades > 0),
+            };
+        },
+    },
+    {
+        name: 'explain_trade',
+        description: 'Post-mortem of one CLOSED trade ("why did this lose?") computed from the real candles around it: max favorable/adverse excursion, whether the stop was hit and price then reversed, tight-stop vs ATR, counter-trend entry, cost share. Use for any question about a specific past trade.',
+        parameters: {
+            type: 'object',
+            properties: { positionId: { type: 'string', description: 'The closed position\'s id (from get_positions with status CLOSED).' } },
+            required: ['positionId'],
+        },
+        async execute(userId, args) {
+            const rows = (await Position.find({ userId, status: 'CLOSED' }) as any[]);
+            const p = rows.find(r => String(r.id ?? r._id) === String(args?.positionId ?? ''));
+            if (!p) return err('Closed trade not found.');
+            const report = runAutopsy({
+                symbol: p.symbol, side: p.side, volume: Number(p.volume) || 0,
+                entryPrice: Number(p.entryPrice), closePrice: Number(p.closePrice),
+                openTime: new Date(p.openTime).getTime(), closeTime: new Date(p.closeTime).getTime(),
+                netProfit: Number(p.finalProfit) || 0,
+                stopLoss: p.stopLoss ?? null, takeProfit: p.takeProfit ?? null,
+                commission: p.commission ?? null, swap: p.swap ?? null,
+            });
+            if (!report.ok) return err(report.reason);
+            // Candles stay server-side; the model gets facts and verdicts.
+            return {
+                timeframe: report.timeframe,
+                facts: report.facts,
+                verdicts: report.verdicts.map(v => ({ key: v.key, summary: v.en, evidence: v.evidence })),
+            };
         },
     },
     {

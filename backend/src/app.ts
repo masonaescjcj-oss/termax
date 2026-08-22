@@ -12,6 +12,7 @@ import communityRoutes from './routes/communityRoutes';
 import campaignRoutes from './routes/campaignRoutes';
 import botRoutes from './routes/botRoutes';
 import backtestRoutes from './routes/backtestRoutes';
+import insightRoutes from './routes/insightRoutes';
 
 const app: Application = express();
 
@@ -52,6 +53,7 @@ app.use('/api/v1/communities', communityRoutes);
 app.use('/api/v1/campaigns', campaignRoutes);
 app.use('/api/v1/bots', botRoutes);
 app.use('/api/v1/backtests', backtestRoutes);
+app.use('/api/v1/insights', insightRoutes);
 
 // Basic Error Handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
