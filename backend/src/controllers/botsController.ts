@@ -13,6 +13,9 @@ import Position from '../models/Position';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import Backtest from '../models/Backtest';
+import { buildBotFromDescription } from '../services/ai/botBuilder';
+import { consumeMessage, dailyLimitFor } from '../services/ai/quota';
+import { describeSpec } from '../services/strategy/describe';
 import { botRunner } from '../services/bots/runner';
 import { evaluateLiveGate } from '../services/bots/liveGate';
 import { computeTradeStats } from '../services/bots/tradeStats';
@@ -203,6 +206,7 @@ export const getBotReport = async (req: AuthRequest, res: Response) => {
             success: true,
             data: {
                 bot: { id: row.id, name: row.name, status: row.status, symbol: row.spec.symbol, startedAt: row.startedAt, liveStartedAt: row.liveStartedAt, liveVolumeMode: row.liveVolumeMode },
+                rules: describeSpec(row.spec, 'fa'),
                 forward,
                 openPosition: (() => {
                     const p = all.find(q => q.botId === row.id && q.status === 'OPEN');
@@ -284,6 +288,71 @@ export const goLiveBot = async (req: AuthRequest, res: Response) => {
                 ? 'Bot is LIVE at minimum volume. Volume follows the spec only after you opt in with volumeMode: SPEC.'
                 : 'Bot is LIVE with the spec\'s own sizing.',
             data: liveRow,
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * NATURAL-LANGUAGE BUILDER — the phase-6 loop as one endpoint.
+ *
+ * Persian/English description in; validated spec + deterministic Persian
+ * rule sheet + real backtest with honesty grade out. Costs one AI-quota
+ * message per call (the retries inside are part of that one message). The
+ * client's ONLY action button on the result is "start forward test" — this
+ * endpoint saves nothing by itself unless save=true is passed with a clean
+ * build.
+ */
+export const buildBot = async (req: AuthRequest, res: Response) => {
+    try {
+        const { description, days, save } = req.body ?? {};
+        if (!description || typeof description !== 'string' || description.trim().length < 10) {
+            return res.status(400).json({ success: false, message: 'Describe the strategy in at least a sentence.' });
+        }
+
+        const user = await User.findById(req.user!.id);
+        const quota = await consumeMessage(req.user!.id, dailyLimitFor(user));
+        if (!quota.allowed) {
+            return res.status(429).json({
+                success: false, paywall: true,
+                message: 'Daily AI message limit reached',
+                usage: { used: quota.used, limit: quota.limit },
+            });
+        }
+
+        const result = await buildBotFromDescription(req.user!.id, description.trim(), { days });
+        if (!result.ok) {
+            return res.status(422).json({
+                success: false,
+                message: 'Could not produce a valid strategy from that description.',
+                attempts: result.attempts,
+                errors: result.errors,
+            });
+        }
+
+        let botId: string | null = null;
+        if (save === true) {
+            const account = findAccount(user, undefined);
+            if (account?.cTraderId && venueKindForAccount(account) !== 'CTRADER') {
+                const existing = await Bot.listByUser(req.user!.id);
+                if (existing.length < MAX_BOTS_PER_USER) {
+                    const row = await Bot.create(req.user!.id, account.cTraderId, result.spec!.name, result.spec!);
+                    botId = row.id;
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                spec: result.spec,
+                rules: result.rules,
+                backtest: result.backtest,
+                attempts: result.attempts,
+                botId,
+            },
+            usage: { used: quota.used, limit: quota.limit },
         });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
