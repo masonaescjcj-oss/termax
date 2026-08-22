@@ -22,6 +22,7 @@ const BotModel = require('../../models/Bot').default;
 const PositionModel = require('../../models/Position').default;
 const UserModel = require('../../models/User').default;
 const tradeController = require('../../controllers/tradeController');
+const liveTrade = require('../../controllers/liveTrade');
 const { BotRunner } = require('./runner') as typeof import('./runner');
 
 // ── tiny assertion harness ──────────────────────────────────────────
@@ -78,7 +79,8 @@ const T0 = Date.UTC(2026, 3, 8, 10, 0, 0);
 const row = (id: string, spec: StrategySpec) => ({
     id, userId: 'user-1', accountId: 'acc-1', name: spec.name, spec,
     status: 'FORWARD_TEST' as const, runState: initialBotState(),
-    startedAt: null, stoppedAt: null, createdAt: new Date(0), updatedAt: new Date(0),
+    liveVolumeMode: 'MIN' as const,
+    startedAt: null, liveStartedAt: null, stoppedAt: null, createdAt: new Date(0), updatedAt: new Date(0),
 });
 
 const bar = (i: number, close: number) => ({
@@ -196,6 +198,51 @@ async function main() {
         await settle();
         check('entry skipped, not crashed', opened.length, 0);
         check('runner still alive', runner.size(), 1);
+    }
+
+    // ── LIVE routing ────────────────────────────────────────────────
+    section('LIVE bot: broker cores, minimum volume by default');
+    {
+        opened.length = 0;
+        UserModel.findById = async () => ({
+            cTraderAccounts: [{ cTraderId: 'live-1', accountType: 'LIVE', balance: 5_000, currency: 'USD' }],
+        });
+        const liveOpened: any[] = [];
+        const liveClosed: any[] = [];
+        liveTrade.openLiveOrderCore = async (userId: string, account: any, params: any) => {
+            liveOpened.push({ userId, account: account.cTraderId, ...params });
+            return { status: 200, body: { data: { id: 'live-pos-1' } } };
+        };
+        liveTrade.closeLivePositionCore = async (userId: string, account: any, positionId: string, reason: string) => {
+            liveClosed.push({ userId, account: account.cTraderId, positionId, reason });
+            return { status: 200, body: { success: true } };
+        };
+
+        const runner = new BotRunner();
+        await runner.register({
+            ...row('bot-live', {
+                name: 'live bot', symbol: 'EUR/USD', timeframe: '1m',
+                entry: { long: { gt: ['close', 0] } },
+                exit: { stopLoss: { pips: 50 }, signal: { long: { lt: ['close', 1] } } },
+                sizing: { riskPercent: 5 }, // would be big — MIN must override it
+            }),
+            accountId: 'live-1',
+            status: 'LIVE' as const,
+        });
+
+        runner.onBar('EUR/USD', '1m', bar(40, 1.1000));
+        await settle();
+        check('live entry goes to the broker core', liveOpened.length, 1);
+        check('simulated core untouched', opened.length, 0);
+        check('MIN mode forces minimum volume', liveOpened[0]?.volume, 0.01);
+        check('live order carries botId', liveOpened[0]?.botId, 'bot-live');
+        check('live order targets the live account', liveOpened[0]?.account, 'live-1');
+
+        runner.onBar('EUR/USD', '1m', bar(42, 0.9000));
+        await settle();
+        check('live exit goes to the broker core', liveClosed.length, 1);
+        check('live close reason', liveClosed[0]?.reason, 'BOT SIGNAL');
+        runner.unregister('bot-live');
     }
 
     // ── report ──────────────────────────────────────────────────────

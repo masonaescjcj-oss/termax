@@ -22,6 +22,7 @@ import Position from '../../models/Position';
 import {
     closeSimulatedAtMarket, openSimulatedOrder,
 } from '../../controllers/tradeController';
+import { closeLivePositionCore, openLiveOrderCore } from '../../controllers/liveTrade';
 import { getSpec, normaliseVolume } from '../../config/instruments';
 import { getSpreadPips, pipValue, accountMetrics, openPrice } from '../pricing';
 import User from '../../models/User';
@@ -151,10 +152,19 @@ export class BotRunner {
         });
         bot.state = state;
 
+        const live = bot.row.status === 'LIVE';
+
         if (decision.exit && bot.openPositionId) {
             const posId = bot.openPositionId;
             await this.onAccount(bot.row.accountId, async () => {
-                const r = await closeSimulatedAtMarket(bot.row.userId, posId, `BOT ${decision.exit!.reason}`);
+                let r: { status: number; body: any };
+                if (live) {
+                    const account = await this.resolveAccount(bot);
+                    if (!account) return; // transient; refresh will reconcile
+                    r = await closeLivePositionCore(bot.row.userId, account, posId, `BOT ${decision.exit!.reason}`);
+                } else {
+                    r = await closeSimulatedAtMarket(bot.row.userId, posId, `BOT ${decision.exit!.reason}`);
+                }
                 if (r.status === 200 || r.status === 404) {
                     // 404 = already closed by SL/TP/stop-out; either way we are flat.
                     bot.openPositionId = null;
@@ -169,22 +179,33 @@ export class BotRunner {
             if (volume === null) return;
 
             await this.onAccount(bot.row.accountId, async () => {
-                const r = await openSimulatedOrder(bot.row.userId, {
-                    accountId: bot.row.accountId,
+                let r: { status: number; body: any };
+                const orderParams = {
                     symbol: bot.row.spec.symbol,
                     side: enter.side,
                     volume,
                     stopLoss: enter.stopLossPrice,
                     takeProfit: enter.takeProfitPrice,
                     trailingStopDistance: enter.trailingDistance ?? 0,
-                    orderType: 'MARKET',
+                    orderType: 'MARKET' as const,
                     botId: bot.row.id,
-                });
+                };
+                if (live) {
+                    const account = await this.resolveAccount(bot);
+                    if (!account) {
+                        console.error(`[Bots] ${bot.row.name}: live account ${bot.row.accountId} not found; entry skipped.`);
+                        return;
+                    }
+                    r = await openLiveOrderCore(bot.row.userId, account, orderParams);
+                } else {
+                    r = await openSimulatedOrder(bot.row.userId, { accountId: bot.row.accountId, ...orderParams });
+                }
                 if (r.status === 200) {
                     bot.openPositionId = String(r.body?.data?.id ?? r.body?.data?._id ?? '');
                     bot.openSide = enter.side;
                 } else {
-                    // A refused entry (margin, quotes) is information, not a crash.
+                    // A refused entry (margin, quotes, broker reject) is
+                    // information, not a crash.
                     console.warn(`[Bots] ${bot.row.name}: entry refused — ${r.body?.message ?? r.status}`);
                 }
             });
@@ -200,12 +221,29 @@ export class BotRunner {
         } catch { /* non-fatal; retried next bar */ }
     }
 
+    /** The user's account record backing this bot. */
+    private async resolveAccount(bot: RunningBot): Promise<any | null> {
+        try {
+            const user = await User.findById(bot.row.userId);
+            return user?.cTraderAccounts?.find((a: any) => a.cTraderId === bot.row.accountId) ?? null;
+        } catch {
+            return null;
+        }
+    }
+
     /** Convert a decision's sizing into lots, or refuse with a reason. */
     private async sizeOrder(bot: RunningBot, enter: EntryDecision): Promise<number | null> {
-        if ('fixedLots' in enter.sizing) return enter.sizing.fixedLots;
-
         const symbol = bot.row.spec.symbol;
         const spec = getSpec(symbol);
+
+        // Live default: the instrument's minimum, whatever the spec says.
+        // Real money starts at the smallest possible size; trusting the
+        // spec's own sizing is an explicit opt-in made at go-live.
+        if (bot.row.status === 'LIVE' && bot.row.liveVolumeMode === 'MIN') {
+            return spec.minVolume;
+        }
+
+        if ('fixedLots' in enter.sizing) return enter.sizing.fixedLots;
 
         // riskPercent: lots such that (SL distance) x pipValue = equity x pct.
         const perLotPip = pipValue(symbol, 1);
@@ -219,8 +257,9 @@ export class BotRunner {
             const user = await User.findById(bot.row.userId);
             const account = user?.cTraderAccounts?.find((a: any) => a.cTraderId === bot.row.accountId);
             const open = await Position.find({ userId: bot.row.userId, status: 'OPEN', accountId: bot.row.accountId });
-            const simulated = (open as any[]).filter(p => p.venue !== 'CTRADER');
-            equity = accountMetrics(account?.balance ?? 0, simulated as any).equity;
+            const live = bot.row.status === 'LIVE';
+            const relevant = (open as any[]).filter(p => live ? p.venue === 'CTRADER' : p.venue !== 'CTRADER');
+            equity = accountMetrics(account?.balance ?? 0, relevant as any).equity;
         } catch (e: any) {
             console.warn(`[Bots] ${bot.row.name}: could not read equity (${e.message}); entry skipped.`);
             return null;

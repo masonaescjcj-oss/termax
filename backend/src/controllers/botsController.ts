@@ -12,7 +12,10 @@ import Bot from '../models/Bot';
 import Position from '../models/Position';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
+import Backtest from '../models/Backtest';
 import { botRunner } from '../services/bots/runner';
+import { evaluateLiveGate } from '../services/bots/liveGate';
+import { computeTradeStats } from '../services/bots/tradeStats';
 import { validateSpec } from '../services/strategy/validate';
 import { venueKindForAccount } from '../services/venues';
 import { findAccount } from './liveTrade';
@@ -96,6 +99,9 @@ export const startBot = async (req: AuthRequest, res: Response) => {
         if (row.status === 'FORWARD_TEST') {
             return res.status(200).json({ success: true, message: 'Already running', data: row });
         }
+        if (row.status === 'LIVE') {
+            return res.status(400).json({ success: false, message: 'The bot is LIVE. Stop it first if you want to demote it to forward test.' });
+        }
 
         // Compile before flipping status, so a spec that stopped validating
         // (e.g. after a grammar tightening) fails here with the reasons.
@@ -135,12 +141,150 @@ export const deleteBot = async (req: AuthRequest, res: Response) => {
         if (!row || row.userId !== req.user!.id) {
             return res.status(404).json({ success: false, message: 'Bot not found' });
         }
-        if (row.status === 'FORWARD_TEST') {
+        if (row.status !== 'STOPPED') {
             return res.status(400).json({ success: false, message: 'Stop the bot before deleting it.' });
         }
         botRunner.unregister(row.id);
         await Bot.remove(row.id, req.user!.id);
         res.status(200).json({ success: true, message: 'Bot deleted' });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * FORWARD-TEST REPORT — the bot's live record, next to three yardsticks:
+ * its own backtest (the "reality gap"), the user's manual trading over the
+ * same period ("bot vs you"), and the live gate's verdict.
+ */
+export const getBotReport = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+
+        const all = await Position.find({ userId: req.user!.id }) as any[];
+        const closed = all.filter(p => p.status === 'CLOSED');
+        const botTrades = closed.filter(p => p.botId === row.id);
+        const forward = computeTradeStats(botTrades);
+        const gate = evaluateLiveGate(row, forward);
+
+        // "Bot vs you": the user's own manual closed trades since the bot
+        // started — same stats formulas, honestly comparable columns.
+        const sinceMs = row.startedAt?.getTime() ?? forward.firstTradeAt ?? 0;
+        const manualTrades = closed.filter(p =>
+            !p.botId && p.closeTime && new Date(p.closeTime).getTime() >= sinceMs);
+        const you = computeTradeStats(manualTrades);
+
+        // Reality gap: forward expectancy vs the most recent completed
+        // backtest of this bot. A big gap means the backtest flattered.
+        let backtest: any = null;
+        try {
+            const tests = await Backtest.listByUser(req.user!.id);
+            const mine = tests.find(t => t.botId === row.id && t.status === 'DONE' && t.summary?.stats);
+            if (mine) {
+                const bs = mine.summary.stats;
+                backtest = {
+                    id: mine.id,
+                    finishedAt: mine.finishedAt,
+                    grade: mine.summary.grade ?? null,
+                    expectancy: bs.expectancy ?? null,
+                    winRate: bs.winRate ?? null,
+                    profitFactor: bs.profitFactor ?? null,
+                    realityGap: (typeof bs.expectancy === 'number' && bs.expectancy > 0 && forward.trades >= 5)
+                        ? Number((forward.expectancy / bs.expectancy).toFixed(2))
+                        : null,
+                };
+            }
+        } catch { /* comparison is best-effort */ }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                bot: { id: row.id, name: row.name, status: row.status, symbol: row.spec.symbol, startedAt: row.startedAt, liveStartedAt: row.liveStartedAt, liveVolumeMode: row.liveVolumeMode },
+                forward,
+                openPosition: (() => {
+                    const p = all.find(q => q.botId === row.id && q.status === 'OPEN');
+                    return p ? { id: p.id, side: p.side, symbol: p.symbol, entryPrice: p.entryPrice, volume: p.volume } : null;
+                })(),
+                gate,
+                backtest,
+                you: { ...you, note: 'Your manual closed trades over the same period.' },
+            },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * GO LIVE — the only door from paper to real money, and the gate is in it.
+ * Requires a completed forward test, a real CTRADER account, and (when the
+ * forward record is losing) an explicit acknowledgement. Live sizing
+ * defaults to the instrument's minimum volume; trusting the spec's sizing
+ * is an explicit opt-in.
+ */
+export const goLiveBot = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+        if (row.status === 'LIVE') {
+            return res.status(400).json({ success: false, message: 'The bot is already live.' });
+        }
+
+        const { accountId, volumeMode, acknowledgeLosingRecord } = req.body ?? {};
+        const user = await User.findById(req.user!.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const account = findAccount(user, accountId);
+        if (!account?.cTraderId) {
+            return res.status(400).json({ success: false, message: 'accountId of a connected cTrader account is required.' });
+        }
+        if (venueKindForAccount(account) !== 'CTRADER') {
+            return res.status(400).json({ success: false, message: 'Live deployment needs a real cTrader account, not a simulated one.' });
+        }
+
+        const closed = (await Position.find({ userId: req.user!.id }) as any[])
+            .filter(p => p.status === 'CLOSED' && p.botId === row.id);
+        const gate = evaluateLiveGate(row, computeTradeStats(closed));
+        if (!gate.eligible) {
+            return res.status(400).json({
+                success: false,
+                message: 'The live gate is closed: complete the forward test first.',
+                gate,
+            });
+        }
+        if (gate.losingRecord && acknowledgeLosingRecord !== true) {
+            return res.status(400).json({
+                success: false,
+                message: 'This bot LOST money in its forward test. To deploy it live anyway, resend with acknowledgeLosingRecord: true.',
+                gate,
+            });
+        }
+
+        const mode: 'MIN' | 'SPEC' = volumeMode === 'SPEC' ? 'SPEC' : 'MIN';
+
+        // Re-register on the live account before flipping the row, so a spec
+        // that stopped compiling fails here, visibly, not at 3am on a signal.
+        botRunner.unregister(row.id);
+        await Bot.goLive(row.id, account.cTraderId, mode);
+        const liveRow = await Bot.findById(row.id);
+        try {
+            await botRunner.register(liveRow!);
+        } catch (e: any) {
+            await Bot.setStatus(row.id, 'STOPPED');
+            return res.status(400).json({ success: false, message: `Spec no longer compiles: ${e.message}` });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: mode === 'MIN'
+                ? 'Bot is LIVE at minimum volume. Volume follows the spec only after you opt in with volumeMode: SPEC.'
+                : 'Bot is LIVE with the spec\'s own sizing.',
+            data: liveRow,
+        });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

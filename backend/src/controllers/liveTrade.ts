@@ -40,7 +40,8 @@ export function findAccount(user: any, accountId?: string): AccountLike | undefi
 async function mirror(
     userId: string,
     account: AccountLike,
-    p: VenuePosition
+    p: VenuePosition,
+    botId?: string
 ): Promise<any | null> {
     try {
         const existing = await Position.findOne({
@@ -69,6 +70,9 @@ async function mirror(
             openTime: p.openTime ?? new Date(),
             venue: 'CTRADER' as const,
             brokerPositionId: p.id,
+            // Only ever set, never cleared: a close update without botId must
+            // not orphan the trade from its bot's record.
+            ...(botId ? { botId } : {}),
         };
 
         if (existing) {
@@ -119,38 +123,52 @@ function requireLiveVenue(account: AccountLike, res: Response) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  OPEN
+//  CORE — HTTP-free order functions.
+//
+//  Two callers: the HTTP handlers below, and the bot runner. Exactly the
+//  same extraction tradeController made for the simulated path, so a live
+//  bot's fill can never diverge from a human's live fill.
 // ═══════════════════════════════════════════════════════════════
 
-export async function openLiveOrder(
-    req: AuthRequest,
-    res: Response,
-    user: any,
-    account: AccountLike
-): Promise<void> {
-    const venue = requireLiveVenue(account, res);
-    if (!venue) return;
+export interface LiveOrderParams {
+    symbol: string;
+    side: string;
+    volume: number;
+    takeProfit?: number | null;
+    stopLoss?: number | null;
+    orderType?: string;
+    targetPrice?: number;
+    trailingStopDistance?: number;
+    /** Set when a bot placed the order — persisted on the mirror row. */
+    botId?: string;
+}
 
-    const { symbol, side, volume, takeProfit, stopLoss, orderType = 'MARKET', targetPrice, trailingStopDistance = 0 } = req.body;
+export interface LiveResult { status: number; body: any }
 
+export async function openLiveOrderCore(
+    userId: string,
+    account: AccountLike,
+    params: LiveOrderParams
+): Promise<LiveResult> {
+    const resolved = venueRouter.resolve(account);
+    if ('error' in resolved) return { status: 503, body: { success: false, message: resolved.error } };
+    const venue = resolved.venue;
+
+    const { symbol, side, takeProfit, stopLoss, orderType = 'MARKET', targetPrice, trailingStopDistance = 0 } = params;
     if (!symbol || !side) {
-        res.status(400).json({ success: false, message: 'symbol and side are required.' });
-        return;
+        return { status: 400, body: { success: false, message: 'symbol and side are required.' } };
     }
 
     const spec = getSpec(symbol);
-    const requested = Number(volume);
+    const requested = Number(params.volume);
     if (!(requested > 0)) {
-        res.status(400).json({ success: false, message: 'Volume must be greater than zero.' });
-        return;
+        return { status: 400, body: { success: false, message: 'Volume must be greater than zero.' } };
     }
     if (requested < spec.minVolume) {
-        res.status(400).json({ success: false, message: `Minimum volume for ${symbol} is ${spec.minVolume} lots.` });
-        return;
+        return { status: 400, body: { success: false, message: `Minimum volume for ${symbol} is ${spec.minVolume} lots.` } };
     }
     if (requested > spec.maxVolume) {
-        res.status(400).json({ success: false, message: `Maximum volume for ${symbol} is ${spec.maxVolume} lots.` });
-        return;
+        return { status: 400, body: { success: false, message: `Maximum volume for ${symbol} is ${spec.maxVolume} lots.` } };
     }
 
     const result = await venue.openOrder({
@@ -166,16 +184,15 @@ export async function openLiveOrder(
     });
 
     if (!result.ok || !result.data) {
-        res.status(400).json({ success: false, message: result.error ?? 'The broker did not accept the order.' });
-        return;
+        return { status: 400, body: { success: false, message: result.error ?? 'The broker did not accept the order.' } };
     }
 
-    const row = await mirror(req.user!.id, account, result.data);
+    const row = await mirror(userId, account, result.data, params.botId);
 
     if (row) {
         try {
             await new TradeHistory({
-                userId: req.user!.id,
+                userId,
                 positionId: row._id ?? row.id,
                 action: 'OPEN',
                 details: `LIVE ${result.data.side} ${result.data.volume} lot(s) of ${result.data.symbol} at ${result.data.entryPrice} via ${account.broker ?? 'cTrader'} (broker ref ${result.data.id})`,
@@ -191,8 +208,76 @@ export async function openLiveOrder(
     doc.venue = 'CTRADER';
     doc.brokerPositionId = result.data.id;
 
-    res.status(200).json({ success: true, message: 'Order sent to the broker', data: doc });
-    emitPositionUpdate(req.user!.id, 'positionOpened', { position: doc });
+    emitPositionUpdate(userId, 'positionOpened', { position: doc });
+    return { status: 200, body: { success: true, message: 'Order sent to the broker', data: doc } };
+}
+
+export async function closeLivePositionCore(
+    userId: string,
+    account: AccountLike,
+    positionId: string,
+    reason = 'MANUAL'
+): Promise<LiveResult> {
+    const resolved = venueRouter.resolve(account);
+    if ('error' in resolved) return { status: 503, body: { success: false, message: resolved.error } };
+    const venue = resolved.venue;
+
+    if (!positionId) {
+        return { status: 400, body: { success: false, message: 'positionId is required.' } };
+    }
+
+    // The caller holds our row id; the broker needs its own reference.
+    const row = await findMirrorRow(userId, positionId);
+    const brokerRef = row?.brokerPositionId ?? String(positionId);
+
+    const result = await venue.closePosition({
+        accountId: account.cTraderId!,
+        positionId: brokerRef,
+    });
+
+    if (!result.ok || !result.data) {
+        return { status: 400, body: { success: false, message: result.error ?? 'The broker did not close the position.' } };
+    }
+
+    const updated = await mirror(userId, account, result.data);
+
+    if (updated) {
+        try {
+            await new TradeHistory({
+                userId,
+                positionId: updated._id ?? updated.id,
+                action: 'CLOSE',
+                details: `LIVE close of ${result.data.volume} lot(s) ${result.data.symbol} at ${result.data.closePrice ?? '-'} (broker ref ${result.data.id}) [${reason}]`,
+                priceAtAction: result.data.closePrice ?? result.data.entryPrice,
+            }).save();
+        } catch (e: any) {
+            console.warn('[Live] Trade history write failed:', e.message);
+        }
+    }
+
+    emitPositionUpdate(userId, 'positionClosed', {
+        positionId: updated?._id ?? updated?.id ?? result.data.id,
+        reason,
+    });
+    return { status: 200, body: { success: true, message: 'Position closed at the broker', data: result.data } };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  OPEN
+// ═══════════════════════════════════════════════════════════════
+
+export async function openLiveOrder(
+    req: AuthRequest,
+    res: Response,
+    user: any,
+    account: AccountLike
+): Promise<void> {
+    const { symbol, side, volume, takeProfit, stopLoss, orderType = 'MARKET', targetPrice, trailingStopDistance = 0 } = req.body;
+    const r = await openLiveOrderCore(req.user!.id, account, {
+        symbol, side, volume: Number(volume),
+        takeProfit, stopLoss, orderType, targetPrice, trailingStopDistance,
+    });
+    res.status(r.status).json(r.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -205,51 +290,45 @@ export async function closeLivePosition(
     user: any,
     account: AccountLike
 ): Promise<void> {
-    const venue = requireLiveVenue(account, res);
-    if (!venue) return;
-
     const { positionId, volume } = req.body;
-    if (!positionId) {
-        res.status(400).json({ success: false, message: 'positionId is required.' });
-        return;
-    }
-
-    // The client holds our row id; the broker needs its own reference.
-    const row = await findMirrorRow(req.user!.id, positionId);
-    const brokerRef = row?.brokerPositionId ?? String(positionId);
-
-    const result = await venue.closePosition({
-        accountId: account.cTraderId!,
-        positionId: brokerRef,
-        volume: volume !== undefined ? Number(volume) : undefined,
-    });
-
-    if (!result.ok || !result.data) {
-        res.status(400).json({ success: false, message: result.error ?? 'The broker did not close the position.' });
-        return;
-    }
-
-    const updated = await mirror(req.user!.id, account, result.data);
-
-    if (updated) {
-        try {
-            await new TradeHistory({
-                userId: req.user!.id,
-                positionId: updated._id ?? updated.id,
-                action: 'CLOSE',
-                details: `LIVE close of ${result.data.volume} lot(s) ${result.data.symbol} at ${result.data.closePrice ?? '-'} (broker ref ${result.data.id})`,
-                priceAtAction: result.data.closePrice ?? result.data.entryPrice,
-            }).save();
-        } catch (e: any) {
-            console.warn('[Live] Trade history write failed:', e.message);
+    // Partial closes still go straight to the venue: the core closes in full.
+    if (volume !== undefined && volume !== null) {
+        const venue = requireLiveVenue(account, res);
+        if (!venue) return;
+        const row = await findMirrorRow(req.user!.id, positionId);
+        const brokerRef = row?.brokerPositionId ?? String(positionId);
+        const result = await venue.closePosition({
+            accountId: account.cTraderId!,
+            positionId: brokerRef,
+            volume: Number(volume),
+        });
+        if (!result.ok || !result.data) {
+            res.status(400).json({ success: false, message: result.error ?? 'The broker did not close the position.' });
+            return;
         }
+        const updated = await mirror(req.user!.id, account, result.data);
+        if (updated) {
+            try {
+                await new TradeHistory({
+                    userId: req.user!.id,
+                    positionId: updated._id ?? updated.id,
+                    action: 'CLOSE',
+                    details: `LIVE partial close of ${result.data.volume} lot(s) ${result.data.symbol} at ${result.data.closePrice ?? '-'} (broker ref ${result.data.id})`,
+                    priceAtAction: result.data.closePrice ?? result.data.entryPrice,
+                }).save();
+            } catch (e: any) {
+                console.warn('[Live] Trade history write failed:', e.message);
+            }
+        }
+        res.status(200).json({ success: true, message: 'Position closed at the broker', data: result.data });
+        emitPositionUpdate(req.user!.id, 'positionClosed', {
+            positionId: updated?._id ?? updated?.id ?? result.data.id,
+            reason: 'MANUAL',
+        });
+        return;
     }
-
-    res.status(200).json({ success: true, message: 'Position closed at the broker', data: result.data });
-    emitPositionUpdate(req.user!.id, 'positionClosed', {
-        positionId: updated?._id ?? updated?.id ?? result.data.id,
-        reason: 'MANUAL',
-    });
+    const r = await closeLivePositionCore(req.user!.id, account, String(positionId ?? ''), 'MANUAL');
+    res.status(r.status).json(r.body);
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -6,7 +6,7 @@
 import { supabase } from '../config/supabase';
 import { initialBotState, BotState, StrategySpec } from '../services/strategy/types';
 
-export type BotStatus = 'STOPPED' | 'FORWARD_TEST';
+export type BotStatus = 'STOPPED' | 'FORWARD_TEST' | 'LIVE';
 
 export interface BotRow {
     id: string;
@@ -16,7 +16,10 @@ export interface BotRow {
     spec: StrategySpec;
     status: BotStatus;
     runState: BotState;
+    /** How live orders are sized: 'MIN' = instrument minimum, 'SPEC' = the spec's sizing. */
+    liveVolumeMode: 'MIN' | 'SPEC';
     startedAt: Date | null;
+    liveStartedAt: Date | null;
     stoppedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -33,7 +36,9 @@ function toCamel(db: any): BotRow {
         runState: db.run_state && Object.keys(db.run_state).length
             ? db.run_state
             : initialBotState(),
+        liveVolumeMode: db.live_volume_mode === 'SPEC' ? 'SPEC' : 'MIN',
         startedAt: db.started_at ? new Date(db.started_at) : null,
+        liveStartedAt: db.live_started_at ? new Date(db.live_started_at) : null,
         stoppedAt: db.stopped_at ? new Date(db.stopped_at) : null,
         createdAt: new Date(db.created_at),
         updatedAt: new Date(db.updated_at),
@@ -67,7 +72,7 @@ export const Bot = {
 
     /** Every bot that should be running — loaded by the runner at boot. */
     async listActive(): Promise<BotRow[]> {
-        const { data, error } = await supabase.from('bots').select('*').eq('status', 'FORWARD_TEST');
+        const { data, error } = await supabase.from('bots').select('*').in('status', ['FORWARD_TEST', 'LIVE']);
         if (error) throw new Error(error.message);
         return (data ?? []).map(toCamel);
     },
@@ -77,6 +82,18 @@ export const Bot = {
         if (status === 'FORWARD_TEST') patch.started_at = new Date().toISOString();
         if (status === 'STOPPED') patch.stopped_at = new Date().toISOString();
         const { error } = await supabase.from('bots').update(patch).eq('id', id);
+        if (error) throw new Error(error.message);
+    },
+
+    /** Promote a gated bot onto a live account. */
+    async goLive(id: string, liveAccountId: string, volumeMode: 'MIN' | 'SPEC'): Promise<void> {
+        const { error } = await supabase.from('bots').update({
+            status: 'LIVE',
+            account_id: liveAccountId,
+            live_volume_mode: volumeMode,
+            live_started_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        }).eq('id', id);
         if (error) throw new Error(error.message);
     },
 
