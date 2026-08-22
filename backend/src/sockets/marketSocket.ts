@@ -5,6 +5,7 @@ import { processTrailingStops, processTPSL, processStopOuts, runGlobalStopOutChe
 import fs from 'fs';
 import path from 'path';
 import { setMidPrice, setQuote, getMid, getQuote, getAllMids, getSpreadPips } from '../services/pricing';
+import { initFeeds, feedRouter } from '../services/feeds';
 import { roundPrice } from '../config/instruments';
 
 const yahooFinance = new YahooFinance();
@@ -260,6 +261,14 @@ export const setupMarketSockets = (io: Server) => {
     const activeSubscriptions = new Set<string>();
     const basePriceCache: Record<string, number> = {};
 
+    // Providers: the broker's cTrader feed for forex/metals/indices, Binance
+    // for crypto, Yahoo as a fallback. Both trading modes price off these.
+    void initFeeds((quote) => {
+        priceCache[quote.symbol] = getMid(quote.symbol) ?? (quote.bid + quote.ask) / 2;
+        const payload = quotePayload(quote.symbol);
+        if (payload) io.to(quote.symbol).emit('priceUpdate', payload);
+    }).catch((e: any) => console.error('[Feed] Initialisation failed:', e.message));
+
     io.on('connection', (socket) => {
         socket.on('subscribe', async (payload: any) => {
             if (!payload) return;
@@ -270,6 +279,10 @@ export const setupMarketSockets = (io: Server) => {
                 socket.join(symbol);
                 const isNew = !activeSubscriptions.has(symbol);
                 activeSubscriptions.add(symbol);
+                if (isNew) {
+                    feedRouter.subscribe([symbol]).catch((e: any) =>
+                        console.warn(`[Feed] Could not subscribe ${symbol}:`, e.message));
+                }
 
                 // If we already have a cached price, send it immediately
                 const cached = quotePayload(symbol);

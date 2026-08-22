@@ -11,6 +11,7 @@ import { setupTradeSockets } from './sockets/tradeSocket';
 import { initTradingEngine } from './controllers/tradeController';
 import { initBot } from './bot';
 import { seedCampaigns } from './controllers/campaignController';
+import { initVenues } from './services/venues';
 
 const PORT = process.env.PORT || 5000;
 
@@ -64,6 +65,14 @@ const startServer = async () => {
                 await initTradingEngine();
             } catch (e: any) {
                 console.log('Trading engine init notice:', e.message);
+            }
+
+            try {
+                // After the feeds, so the live venue can share the broker's
+                // authenticated connection rather than opening a second one.
+                initVenues();
+            } catch (e: any) {
+                console.log('Venue init notice:', e.message);
             }
 
             try {
