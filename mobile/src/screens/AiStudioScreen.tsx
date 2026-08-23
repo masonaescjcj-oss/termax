@@ -15,7 +15,7 @@ import { Text, TextInput } from '../components/Typography';
 import axios from 'axios';
 import {
     ChevronLeft, Bot as BotIcon, Activity, BarChart3, Share2, Download,
-    Upload, Sparkles, FileJson, X, LineChart, Trash2,
+    Upload, Sparkles, FileJson, X, LineChart, Trash2, Code2,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -198,8 +198,18 @@ export default function AiStudioScreen({ navigation }) {
             <View style={styles.cardTop}>
                 <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: ind.color, marginRight: 8, marginTop: 4 }} />
                 <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName} numberOfLines={1}>{ind.name}</Text>
-                    <Text style={[styles.itemMeta, { fontFamily: Platform.OS === 'web' ? 'monospace' : undefined }]} numberOfLines={2}>{ind.expr}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.itemName} numberOfLines={1}>{ind.name}</Text>
+                        {ind.kind === 'CODE' && (
+                            <View style={styles.jsBadge}>
+                                <Code2 color={'#FBBF24'} size={9} />
+                                <Text style={styles.jsBadgeText}>JS</Text>
+                            </View>
+                        )}
+                    </View>
+                    <Text style={[styles.itemMeta, { fontFamily: Platform.OS === 'web' ? 'monospace' : undefined }]} numberOfLines={2}>
+                        {ind.kind === 'CODE' ? (ind.code ?? '').replace(/\s+/g, ' ').slice(0, 90) : ind.expr}
+                    </Text>
                 </View>
                 <OriginBadge origin={ind.origin} />
             </View>
@@ -345,6 +355,12 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginLeft: 8,
     },
     originText: { fontSize: 10, fontWeight: '700' },
+    jsBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: 'rgba(251,191,36,0.15)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.45)',
+        paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6,
+    },
+    jsBadgeText: { fontSize: 9, fontWeight: '800', color: '#FBBF24' },
     actionRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     actionIcon: {
         width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',

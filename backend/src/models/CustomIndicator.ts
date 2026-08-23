@@ -8,7 +8,9 @@ export interface CustomIndicatorRow {
     id: string;
     userId: string;
     name: string;
+    kind: 'EXPR' | 'CODE';
     expr: string;
+    code: string | null;
     pane: 'price' | 'separate';
     color: string;
     enabled: boolean;
@@ -22,7 +24,9 @@ function toCamel(db: any): CustomIndicatorRow {
         id: db.id,
         userId: db.user_id,
         name: db.name,
-        expr: db.expr,
+        kind: db.kind === 'CODE' ? 'CODE' : 'EXPR',
+        expr: db.expr ?? '',
+        code: db.code ?? null,
         pane: db.pane === 'price' ? 'price' : 'separate',
         color: db.color ?? '#F5A623',
         enabled: !!db.enabled,
@@ -33,10 +37,16 @@ function toCamel(db: any): CustomIndicatorRow {
 }
 
 export const CustomIndicator = {
-    async create(userId: string, fields: { name: string; expr: string; pane: 'price' | 'separate'; color: string; origin?: 'USER' | 'AI' | 'IMPORT' | 'CLONE' }): Promise<CustomIndicatorRow> {
+    async create(userId: string, fields: { name: string; expr?: string; kind?: 'EXPR' | 'CODE'; code?: string | null; pane: 'price' | 'separate'; color: string; origin?: 'USER' | 'AI' | 'IMPORT' | 'CLONE' }): Promise<CustomIndicatorRow> {
         const { data, error } = await supabase
             .from('custom_indicators')
-            .insert({ user_id: userId, name: fields.name, expr: fields.expr, pane: fields.pane, color: fields.color, origin: fields.origin ?? 'USER' })
+            .insert({
+                user_id: userId, name: fields.name,
+                kind: fields.kind === 'CODE' ? 'CODE' : 'EXPR',
+                expr: fields.expr ?? '',
+                code: fields.kind === 'CODE' ? (fields.code ?? '') : null,
+                pane: fields.pane, color: fields.color, origin: fields.origin ?? 'USER',
+            })
             .select()
             .single();
         if (error) throw new Error(error.message);

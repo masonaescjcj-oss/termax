@@ -40,16 +40,16 @@ const MIN = 60_000;
 
 async function main() {
     // ── registry integrity ──────────────────────────────────────────
-    section('registry: 14 typed tools, unique, schema-complete');
+    section('registry: 15 typed tools, unique, schema-complete');
     {
         const names = AI_TOOLS.map(t => t.name);
-        check('fourteen tools', names.length, 14);
+        check('fifteen tools', names.length, 15);
         check('names unique', new Set(names).size, names.length);
         check('no execute_order tool exists', names.includes('execute_order'), false);
         check('propose_order exists', names.includes('propose_order'), true);
         const schemas = toolSchemas();
         check('every tool has a schema', schemas.every(s => s.function.name && s.function.description && s.function.parameters), true);
-        const expected = ['get_account', 'get_positions', 'get_trade_stats', 'get_quote', 'get_candles', 'get_indicator', 'run_backtest', 'save_strategy', 'deploy_strategy', 'propose_order', 'get_trade_dna', 'explain_trade', 'eval_indicator_expr', 'save_custom_indicator'];
+        const expected = ['get_account', 'get_positions', 'get_trade_stats', 'get_quote', 'get_candles', 'get_indicator', 'run_backtest', 'save_strategy', 'deploy_strategy', 'propose_order', 'get_trade_dna', 'explain_trade', 'eval_indicator_expr', 'save_custom_indicator', 'save_code_indicator'];
         check('exactly the documented tool set', expected.every(n => names.includes(n)), true);
     }
 

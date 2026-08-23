@@ -32,6 +32,8 @@ import { Bar, TIMEFRAMES, Timeframe } from '../strategy/types';
 import { venueKindForAccount } from '../venues';
 import CustomIndicator from '../../models/CustomIndicator';
 import { evalExprOverBars, parseExpr } from '../strategy/exprIndicator';
+import { CODE_MAX_LENGTH, runCodeIndicator } from '../code/quickjsIndicator';
+import { limitsFor } from '../plans';
 import { computeTradeDna } from '../insights/tradeDna';
 import { runAutopsy } from '../insights/autopsy';
 import { getTradeStats } from './statsRollup';
@@ -445,6 +447,40 @@ export const AI_TOOLS: AiTool[] = [
                 origin: 'AI',
             });
             return { indicatorId: row.id, name: row.name, pane: row.pane, note: 'Saved and enabled — it will draw on the chart automatically.' };
+        },
+    },
+    {
+        name: 'save_code_indicator',
+        description: 'PRO ONLY. Save a JavaScript custom indicator that runs in a sandbox. The code must define  function calc(bars)  where bars is [{time,open,high,low,close,volume}] oldest-first, returning an array of numbers aligned to bars (null = no value) or {time,value} objects. No loops-forever, no Math.random, no Date, no imports — deterministic maths only. Validated by a real sandbox dry run before saving.',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: '2-40 characters.' },
+                code: { type: 'string', description: 'function calc(bars) { ... }' },
+                pane: { type: 'string', enum: ['price', 'separate'] },
+                color: { type: 'string' },
+            },
+            required: ['name', 'code'],
+        },
+        async execute(userId, args) {
+            const user = await User.findById(userId);
+            if (!limitsFor(user).codeIndicators) return err('Code indicators are a PRO feature. Offer the free expression tier (save_custom_indicator) instead.');
+            const name = String(args?.name ?? '').trim();
+            if (name.length < 2 || name.length > 40) return err('name must be 2-40 characters.');
+            const code = String(args?.code ?? '');
+            if (!code.trim() || code.length > CODE_MAX_LENGTH) return err(`code must be 1-${CODE_MAX_LENGTH} characters.`);
+            const probe = Array.from({ length: 60 }, (_, i) => ({ time: i * 60_000, open: 100 + i, high: 100.5 + i, low: 99.5 + i, close: 100 + i, volume: 1 }));
+            const dry = await runCodeIndicator(code, probe);
+            if (!dry.ok) return err(`The code failed its dry run: ${dry.error}`);
+            const existing = await CustomIndicator.listByUser(userId);
+            if (existing.length >= limitsFor(user).maxCustomIndicators) return err('Indicator limit reached for this plan.');
+            const row = await CustomIndicator.create(userId, {
+                name, kind: 'CODE', code,
+                pane: args?.pane === 'price' ? 'price' : 'separate',
+                color: typeof args?.color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(args.color) ? args.color : '#F5A623',
+                origin: 'AI',
+            });
+            return { indicatorId: row.id, name: row.name, kind: 'CODE', note: 'Saved and enabled — drawing on the chart automatically.' };
         },
     },
     {
