@@ -390,6 +390,15 @@ export default function BotsScreen({ navigation }) {
                 {Array.isArray(bt.warnings) && bt.warnings.map((w: string, i: number) => (
                     <Text key={i} style={[styles.checkLine, { color: '#F5A623' }]}>⚠️ {w}</Text>
                 ))}
+                {bt.backtestId && (
+                    <TouchableOpacity
+                        style={[styles.chartBtn, { alignSelf: 'flex-start', marginTop: 10 }]}
+                        onPress={() => navigation.navigate('MainTabs', { screen: 'Chart', params: { backtestId: bt.backtestId, ts: Date.now() } })}
+                    >
+                        <LineChart color={colors.primary} size={15} />
+                        <Text style={[styles.actionBtnText, { color: colors.primary }]}>View trades on chart</Text>
+                    </TouchableOpacity>
+                )}
                 <Text style={styles.noteText}>The honesty grade measures how much this backtest can be trusted — not how good the strategy is.</Text>
             </GlassView>
         );

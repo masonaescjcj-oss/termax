@@ -1196,6 +1196,50 @@ export default function ChartScreen({ navigation, route }: any) {
     return () => { cancelled = true; };
   }, [route?.params?.botId, route?.params?.ts]);
 
+  // A finished backtest arrived via navigation: draw its simulated trades
+  // with the same overlay the live bot uses — one visual language for
+  // "what this strategy did", paper or real.
+  useEffect(() => {
+    const backtestId = route?.params?.backtestId;
+    if (!backtestId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getItemAsync('accessToken');
+        const res = await axios.get(`${BACKEND_URL}/api/v1/backtests/${backtestId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const row = res.data?.data;
+        const trades = row?.result?.trades ?? [];
+        if (!row || cancelled || !trades.length) return;
+
+        const targetSymbol = row.spec?.symbol;
+        const needsSymbolSwitch = targetSymbol && targetSymbol !== symbol;
+        if (needsSymbolSwitch) setSymbol(targetSymbol);
+
+        const send = () => {
+          if (cancelled) return;
+          // Cap what we draw: a 2,000-trade backtest as overlays would
+          // wedge the WebView; the most recent 200 tell the story.
+          sendMessageToChart(JSON.stringify({ type: 'botTrades', trades: trades.slice(-200) }));
+        };
+        if (!needsSymbolSwitch) {
+          send();
+        } else {
+          let tries = 0;
+          const timer = setInterval(() => {
+            tries++;
+            if (cancelled || tries > 50) { clearInterval(timer); return; }
+            if (chartReadyRef.current) { clearInterval(timer); send(); }
+          }, 300);
+        }
+      } catch (e) {
+        console.log('[Chart] Could not load backtest trades', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [route?.params?.backtestId, route?.params?.ts]);
+
   // Load saved chart color theme on mount
   useEffect(() => {
     const loadSavedTheme = async () => {
@@ -1799,6 +1843,27 @@ export default function ChartScreen({ navigation, route }: any) {
   };
 
   const [riskInfo, setRiskInfo] = useState('');
+
+  // Pre-trade warnings: the user's OWN record talking back before the
+  // order goes out — worst hour, minutes-after-a-loss, unusual size, wide
+  // spread. Warnings with reasons, never blocks.
+  const [preTradeWarnings, setPreTradeWarnings] = useState<any[]>([]);
+  useEffect(() => {
+    if (!isOrderPanelOpen) { setPreTradeWarnings([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getItemAsync('accessToken');
+        if (!token) return;
+        const res = await axios.get(`${BACKEND_URL}/api/v1/insights/pre-trade`, {
+          params: { symbol, volume: Number(orderVolume) || 0 },
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!cancelled) setPreTradeWarnings(res.data?.data?.warnings ?? []);
+      } catch { /* warnings are advisory */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isOrderPanelOpen, symbol, orderVolume]);
   
   const calculateAutoLot = async () => {
     if (!riskPercent || !orderSL || !livePrice || livePrice === '...') return;
@@ -2055,6 +2120,16 @@ export default function ChartScreen({ navigation, route }: any) {
                 <X color={colors.textMuted} size={24} />
               </TouchableOpacity>
             </View>
+
+            {preTradeWarnings.length > 0 && (
+              <View style={{ backgroundColor: 'rgba(245,166,35,0.12)', borderColor: 'rgba(245,166,35,0.4)', borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                {preTradeWarnings.map((w: any, i: number) => (
+                  <Text key={i} style={{ color: '#F5A623', fontSize: 11.5, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl' }}>
+                    ⚠️ {w.fa || w.en}
+                  </Text>
+                ))}
+              </View>
+            )}
 
             {/* Order Type Tabs */}
             <View style={{ flexDirection: 'row', marginBottom: 4 }}>
