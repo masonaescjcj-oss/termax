@@ -18,6 +18,7 @@
  */
 
 import Bot, { BotRow } from '../../models/Bot';
+import BotEvent from '../../models/BotEvent';
 import Position from '../../models/Position';
 import {
     closeSimulatedAtMarket, openSimulatedOrder,
@@ -27,6 +28,8 @@ import { getSpec, normaliseVolume } from '../../config/instruments';
 import { getSpreadPips, pipValue, accountMetrics, openPrice } from '../pricing';
 import User from '../../models/User';
 import { compileStrategy, CompiledStrategy } from '../strategy/interpreter';
+import { computeTradeStats } from './tradeStats';
+import { evaluateWatchdog } from './watchdog';
 import { Bar, BotState, EntryDecision, Timeframe } from '../strategy/types';
 
 interface RunningBot {
@@ -38,6 +41,9 @@ interface RunningBot {
     openSide: 'BUY' | 'SELL' | null;
     /** Serialises this bot's own async work so bars cannot interleave. */
     busy: Promise<void>;
+    /** Watchdog verdict cache. */
+    watchdogCheckedAt?: number;
+    watchdogBlocked: boolean;
 }
 
 export class BotRunner {
@@ -109,12 +115,22 @@ export class BotRunner {
             row, compiled, state: row.runState,
             openPositionId, openSide,
             busy: Promise.resolve(),
+            watchdogBlocked: false,
         });
 
         const symbol = row.spec.symbol;
         if (!this.bySymbol.has(symbol)) this.bySymbol.set(symbol, new Set());
         this.bySymbol.get(symbol)!.add(row.id);
         this.ensureFeed(symbol);
+    }
+
+    /** Apply new watchdog settings to a running bot without a restart. */
+    refreshWatchdog(botId: string, cfg: BotRow['watchdog']): void {
+        const bot = this.bots.get(botId);
+        if (!bot) return;
+        bot.row = { ...bot.row, watchdog: cfg };
+        bot.watchdogCheckedAt = undefined;
+        bot.watchdogBlocked = false;
     }
 
     unregister(botId: string): void {
@@ -175,6 +191,12 @@ export class BotRunner {
             });
         } else if (decision.enter && !bot.openPositionId) {
             const enter = decision.enter;
+
+            // The watchdog gates NEW entries only: an open position keeps
+            // its SL/TP whatever the verdict says.
+            const blocked = await this.watchdogBlocks(bot);
+            if (blocked) return;
+
             const volume = await this.sizeOrder(bot, enter);
             if (volume === null) return;
 
@@ -219,6 +241,71 @@ export class BotRunner {
         try {
             await Bot.saveRunState(bot.row.id, bot.state);
         } catch { /* non-fatal; retried next bar */ }
+    }
+
+    /**
+     * Ask the watchdog whether this bot may still enter. On a trip with
+     * action PAUSE the bot is stopped here and now (and unregistered, so
+     * later bars cannot resurrect it); with ALERT the event is recorded
+     * and the entry proceeds — the user asked to be told, not stopped.
+     *
+     * Cached for a minute: the verdict only changes when a trade closes,
+     * and the DB reads are not worth repeating per bar.
+     */
+    private async watchdogBlocks(bot: RunningBot): Promise<boolean> {
+        const cfg = bot.row.watchdog;
+        if (!cfg?.enabled) return false;
+
+        const now = Date.now();
+        if (bot.watchdogCheckedAt && now - bot.watchdogCheckedAt < 60_000) {
+            return bot.watchdogBlocked;
+        }
+        bot.watchdogCheckedAt = now;
+
+        try {
+            const closed = (await Position.find({ userId: bot.row.userId, status: 'CLOSED' }) as any[])
+                .filter(p => p.botId === bot.row.id);
+
+            // Percentages are measured against what the user actually has.
+            const account = await this.resolveAccount(bot);
+            const open = (await Position.find({ userId: bot.row.userId, status: 'OPEN', accountId: bot.row.accountId }) as any[]);
+            const live = bot.row.status === 'LIVE';
+            const relevant = open.filter(p => live ? p.venue === 'CTRADER' : p.venue !== 'CTRADER');
+            const equity = accountMetrics(account?.balance ?? 0, relevant as any).equity;
+
+            const verdict = evaluateWatchdog(cfg, closed, equity, now);
+            if (!verdict.tripped) {
+                bot.watchdogBlocked = false;
+                return false;
+            }
+
+            await BotEvent.record(bot.row.userId, bot.row.id, {
+                kind: `watchdog:${verdict.key}`,
+                severity: verdict.severity,
+                messageFa: verdict.fa,
+                messageEn: verdict.en,
+                evidence: { ...verdict.evidence, action: cfg.action },
+            }).catch(() => undefined);
+
+            if (cfg.action === 'PAUSE') {
+                console.warn(`[Watchdog] Pausing ${bot.row.name}: ${verdict.en}`);
+                bot.watchdogBlocked = true;
+                this.unregister(bot.row.id);
+                await Bot.setStatus(bot.row.id, 'STOPPED').catch((e: any) =>
+                    console.error('[Watchdog] Could not persist the stop:', e.message));
+                return true;
+            }
+
+            // ALERT: told, not stopped.
+            bot.watchdogBlocked = false;
+            return false;
+        } catch (e: any) {
+            // A watchdog that cannot read the record must not silently
+            // block a working bot; it fails OPEN and says so.
+            console.warn(`[Watchdog] ${bot.row.name}: check failed (${e.message}); entry allowed.`);
+            bot.watchdogBlocked = false;
+            return false;
+        }
     }
 
     /** The user's account record backing this bot. */

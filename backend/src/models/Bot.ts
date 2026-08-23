@@ -5,6 +5,7 @@
 
 import { supabase } from '../config/supabase';
 import { initialBotState, BotState, StrategySpec } from '../services/strategy/types';
+import { watchdogConfig, WatchdogConfig } from '../services/bots/watchdog';
 
 export type BotStatus = 'STOPPED' | 'FORWARD_TEST' | 'LIVE';
 
@@ -20,6 +21,8 @@ export interface BotRow {
     liveVolumeMode: 'MIN' | 'SPEC';
     /** USER (hand-built) / AI (MaxAI or the builder) / IMPORT / CLONE. */
     origin: 'USER' | 'AI' | 'IMPORT' | 'CLONE';
+    /** Safety limits; can only ever stop the bot. */
+    watchdog: WatchdogConfig;
     startedAt: Date | null;
     liveStartedAt: Date | null;
     stoppedAt: Date | null;
@@ -40,6 +43,7 @@ function toCamel(db: any): BotRow {
             : initialBotState(),
         liveVolumeMode: db.live_volume_mode === 'SPEC' ? 'SPEC' : 'MIN',
         origin: ['AI', 'IMPORT', 'CLONE'].includes(db.origin) ? db.origin : 'USER',
+        watchdog: watchdogConfig(db.watchdog),
         startedAt: db.started_at ? new Date(db.started_at) : null,
         liveStartedAt: db.live_started_at ? new Date(db.live_started_at) : null,
         stoppedAt: db.stopped_at ? new Date(db.stopped_at) : null,
@@ -97,6 +101,15 @@ export const Bot = {
             live_started_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
         }).eq('id', id);
+        if (error) throw new Error(error.message);
+    },
+
+    /** Save this bot's watchdog settings (including its on/off switch). */
+    async saveWatchdog(id: string, watchdog: WatchdogConfig): Promise<void> {
+        const { error } = await supabase
+            .from('bots')
+            .update({ watchdog, updated_at: new Date().toISOString() })
+            .eq('id', id);
         if (error) throw new Error(error.message);
     },
 

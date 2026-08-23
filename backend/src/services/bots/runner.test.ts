@@ -16,6 +16,7 @@ process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'stub-key
 
 import { setQuote, __resetQuotes } from '../pricing';
 import { initialBotState, StrategySpec } from '../strategy/types';
+import { DEFAULT_WATCHDOG } from './watchdog';
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const BotModel = require('../../models/Bot').default;
@@ -79,7 +80,7 @@ const T0 = Date.UTC(2026, 3, 8, 10, 0, 0);
 const row = (id: string, spec: StrategySpec) => ({
     id, userId: 'user-1', accountId: 'acc-1', name: spec.name, spec,
     status: 'FORWARD_TEST' as const, runState: initialBotState(),
-    liveVolumeMode: 'MIN' as const, origin: 'USER' as const,
+    liveVolumeMode: 'MIN' as const, origin: 'USER' as const, watchdog: DEFAULT_WATCHDOG,
     startedAt: null, liveStartedAt: null, stoppedAt: null, createdAt: new Date(0), updatedAt: new Date(0),
 });
 

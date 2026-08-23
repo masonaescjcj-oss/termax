@@ -13,13 +13,13 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     View, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView,
-    Platform, ActivityIndicator, RefreshControl, Alert,
+    Platform, ActivityIndicator, RefreshControl, Alert, Switch,
 } from 'react-native';
 import { Text, TextInput } from '../components/Typography';
 import axios from 'axios';
 import {
     Bot as BotIcon, ChevronLeft, Play, Square, Trash2, Plus, Sparkles,
-    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart, Trophy,
+    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart, Trophy, ShieldOff, Siren,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -65,6 +65,7 @@ export default function BotsScreen({ navigation }) {
     // report state
     const [report, setReport] = useState<any>(null);
     const [reportLoading, setReportLoading] = useState(false);
+    const [savingWatchdog, setSavingWatchdog] = useState(false);
 
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -192,6 +193,34 @@ export default function BotsScreen({ navigation }) {
         } catch (e: any) {
             showToast(e.response?.data?.message || e.message, 'error');
         } finally { setDeploying(false); }
+    };
+
+    // The watchdog's on/off switch. Turning it OFF is a real decision, so
+    // it asks once — and the server records it in the bot's audit trail.
+    const setWatchdogEnabled = async (botId: string, enabled: boolean) => {
+        setSavingWatchdog(true);
+        try {
+            const res = await api('post', `/api/v1/bots/${botId}/watchdog`, { enabled });
+            if (res.data?.success) {
+                setReport((r: any) => r ? { ...r, watchdog: { ...r.watchdog, config: res.data.data.config } } : r);
+                showToast(enabled ? 'نگهبان روشن شد' : 'نگهبان خاموش شد — هیچ سقفی ربات را متوقف نمی‌کند', enabled ? 'success' : 'info');
+            }
+        } catch (e: any) {
+            showToast(e.response?.data?.message || 'Could not change the watchdog', 'error');
+        } finally { setSavingWatchdog(false); }
+    };
+
+    const toggleWatchdog = (botId: string, next: boolean) => {
+        if (next) { setWatchdogEnabled(botId, true); return; }
+        const msg = 'نگهبان را خاموش می‌کنید؟ از این پس هیچ سقف ضرری این ربات را متوقف نمی‌کند.';
+        if (Platform.OS === 'web') {
+            if ((window as any).confirm?.(msg)) setWatchdogEnabled(botId, false);
+        } else {
+            Alert.alert('Turn the watchdog off?', msg, [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Turn off', style: 'destructive', onPress: () => setWatchdogEnabled(botId, false) },
+            ]);
+        }
     };
 
     const goLive = (data: any) => {
@@ -536,6 +565,80 @@ export default function BotsScreen({ navigation }) {
                                 </View>
                                 <Text style={styles.noteText}>Your manual closed trades over the same period, same formulas.</Text>
                             </GlassView>
+
+                            {d.watchdog && (
+                                <GlassView intensity={14} style={styles.sectionCard}>
+                                    <View style={styles.sectionHeaderRow}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                            {d.watchdog.config.enabled
+                                                ? <ShieldCheck color={colors.success} size={19} />
+                                                : <ShieldOff color={colors.textSecondary} size={19} />}
+                                            <Text style={styles.sectionTitle}>نگهبان ربات</Text>
+                                        </View>
+                                        <Switch
+                                            value={!!d.watchdog.config.enabled}
+                                            disabled={savingWatchdog}
+                                            onValueChange={(v) => toggleWatchdog(d.bot.id, v)}
+                                            trackColor={{ false: isDark ? '#3A3F4B' : '#CBD5E1', true: 'rgba(8,153,129,0.45)' }}
+                                            thumbColor={d.watchdog.config.enabled ? colors.success : '#F1F5F9'}
+                                        />
+                                    </View>
+
+                                    {d.watchdog.config.enabled ? (
+                                        <>
+                                            <View style={styles.statRow}>
+                                                <StatCell
+                                                    label={`ضرر امروز / سقف ${d.watchdog.config.maxDailyLossPct}٪`}
+                                                    value={money(d.watchdog.verdict.readings.todayNet)}
+                                                    color={d.watchdog.verdict.readings.todayNet < 0 ? colors.danger : colors.success}
+                                                />
+                                                <StatCell
+                                                    label={`ضرر پیاپی / ${d.watchdog.config.maxConsecutiveLosses}`}
+                                                    value={d.watchdog.verdict.readings.consecutiveLosses}
+                                                    color={d.watchdog.verdict.readings.consecutiveLosses >= d.watchdog.config.maxConsecutiveLosses ? colors.danger : undefined}
+                                                />
+                                                <StatCell
+                                                    label={`افت / سقف ${d.watchdog.config.maxDrawdownPct}٪`}
+                                                    value={`${d.watchdog.verdict.readings.drawdownPct}%`}
+                                                    color={d.watchdog.verdict.readings.drawdownPct >= d.watchdog.config.maxDrawdownPct ? colors.danger : undefined}
+                                                />
+                                            </View>
+                                            {d.watchdog.verdict.readings.edgeRatio !== null && (
+                                                <Text style={styles.checkLine}>
+                                                    {d.watchdog.verdict.readings.edgeRatio >= 0.6 ? '✅' : d.watchdog.verdict.readings.edgeRatio > 0.3 ? '⚠️' : '❌'} لبه: {Math.round(d.watchdog.verdict.readings.edgeRatio * 100)}٪ از انتظار ریاضی شروع باقی مانده
+                                                </Text>
+                                            )}
+                                            <Text style={[styles.checkLine, { color: d.watchdog.verdict.tripped ? colors.danger : colors.textSecondary }]}>
+                                                {d.watchdog.verdict.tripped ? '⛔ ' : ''}{d.watchdog.verdict.fa}
+                                            </Text>
+                                            <Text style={styles.noteText}>
+                                                {d.watchdog.config.action === 'PAUSE'
+                                                    ? 'با عبور از هر سقف، ربات خودش متوقف می‌شود؛ پوزیشن باز با حد ضرر خودش می‌ماند.'
+                                                    : 'با عبور از هر سقف فقط هشدار ثبت می‌شود و ربات ادامه می‌دهد.'}
+                                            </Text>
+                                        </>
+                                    ) : (
+                                        <Text style={[styles.noteText, { color: '#F5A623' }]}>
+                                            نگهبان خاموش است — هیچ سقف ضرر روزانه، ضرر پیاپی یا افت سرمایه‌ای این ربات را متوقف نمی‌کند.
+                                        </Text>
+                                    )}
+
+                                    {Array.isArray(d.watchdog.events) && d.watchdog.events.length > 0 && (
+                                        <View style={{ marginTop: 10 }}>
+                                            <Text style={[styles.sectionTitle, { fontSize: 13 }]}>رویدادها</Text>
+                                            {d.watchdog.events.slice(0, 5).map((ev: any) => (
+                                                <View key={ev.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 6 }}>
+                                                    <Siren color={ev.severity === 'ALERT' ? colors.danger : ev.severity === 'WARN' ? '#F5A623' : colors.textSecondary} size={13} />
+                                                    <Text style={[styles.checkLine, { flex: 1, textAlign: 'right', writingDirection: 'rtl' }]}>
+                                                        {ev.messageFa}
+                                                        <Text style={{ color: colors.textSecondary }}>{'  '}{new Date(ev.createdAt).toLocaleDateString()}</Text>
+                                                    </Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+                                </GlassView>
+                            )}
 
                             <GlassView intensity={14} style={styles.sectionCard}>
                                 <View style={styles.sectionHeaderRow}>

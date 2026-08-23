@@ -13,12 +13,15 @@ import Position from '../models/Position';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import Backtest from '../models/Backtest';
+import BotEvent from '../models/BotEvent';
 import { buildBotFromDescription } from '../services/ai/botBuilder';
 import { consumeMessage, dailyLimitFor } from '../services/ai/quota';
 import { describeSpec } from '../services/strategy/describe';
 import { botRunner } from '../services/bots/runner';
 import { evaluateLiveGate } from '../services/bots/liveGate';
 import { computeTradeStats } from '../services/bots/tradeStats';
+import { evaluateWatchdog, watchdogConfig } from '../services/bots/watchdog';
+import { accountMetrics } from '../services/pricing';
 import { validateSpec } from '../services/strategy/validate';
 import { limitsFor, planOf } from '../services/plans';
 import { venueKindForAccount } from '../services/venues';
@@ -208,11 +211,24 @@ export const getBotReport = async (req: AuthRequest, res: Response) => {
             }
         } catch { /* comparison is best-effort */ }
 
+        // Watchdog: its live readings, plus the events it has recorded.
+        let watchdog: any = null;
+        try {
+            const user2 = await User.findById(req.user!.id);
+            const account = user2?.cTraderAccounts?.find((a: any) => a.cTraderId === row.accountId);
+            const openRows = all.filter(p => p.status === 'OPEN' && p.accountId === row.accountId
+                && (row.status === 'LIVE' ? p.venue === 'CTRADER' : p.venue !== 'CTRADER'));
+            const equity = accountMetrics(account?.balance ?? 0, openRows as any).equity;
+            const verdict = evaluateWatchdog(row.watchdog, botTrades, equity);
+            watchdog = { config: row.watchdog, verdict, events: await BotEvent.listByBot(row.id, 10).catch(() => []) };
+        } catch { /* the report survives without it */ }
+
         res.status(200).json({
             success: true,
             data: {
                 bot: { id: row.id, name: row.name, status: row.status, symbol: row.spec.symbol, startedAt: row.startedAt, liveStartedAt: row.liveStartedAt, liveVolumeMode: row.liveVolumeMode },
                 rules: describeSpec(row.spec, 'fa'),
+                watchdog,
                 forward,
                 openPosition: (() => {
                     const p = all.find(q => q.botId === row.id && q.status === 'OPEN');
@@ -487,6 +503,82 @@ export const importBot = async (req: AuthRequest, res: Response) => {
             message: 'Imported. It starts STOPPED — backtest and forward test it yourself before trusting it.',
             data: row,
         });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * WATCHDOG SETTINGS — read and write, including the master on/off switch.
+ * Turning it off is explicit and instant; nothing about it is hidden.
+ */
+export const getWatchdog = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+        const closed = (await Position.find({ userId: req.user!.id, status: 'CLOSED' }) as any[])
+            .filter(p => p.botId === row.id);
+        const user = await User.findById(req.user!.id);
+        const account = user?.cTraderAccounts?.find((a: any) => a.cTraderId === row.accountId);
+        const open = (await Position.find({ userId: req.user!.id, status: 'OPEN', accountId: row.accountId }) as any[])
+            .filter(p => row.status === 'LIVE' ? p.venue === 'CTRADER' : p.venue !== 'CTRADER');
+        const equity = accountMetrics(account?.balance ?? 0, open as any).equity;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                config: row.watchdog,
+                verdict: evaluateWatchdog(row.watchdog, closed, equity),
+                events: await BotEvent.listByBot(row.id, 20).catch(() => []),
+            },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+export const updateWatchdog = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+        // Merge over what is stored, so a client can PATCH just the switch.
+        const next = watchdogConfig({ ...row.watchdog, ...(req.body ?? {}) });
+        await Bot.saveWatchdog(row.id, next);
+
+        // A change this consequential belongs in the audit trail.
+        const changedEnabled = next.enabled !== row.watchdog.enabled;
+        if (changedEnabled) {
+            await BotEvent.record(req.user!.id, row.id, {
+                kind: next.enabled ? 'watchdog:enabled' : 'watchdog:disabled',
+                severity: next.enabled ? 'INFO' : 'WARN',
+                messageFa: next.enabled
+                    ? 'نگهبان روشن شد.'
+                    : 'نگهبان خاموش شد — از این پس هیچ سقف ضرری ربات را متوقف نمی‌کند.',
+                messageEn: next.enabled
+                    ? 'The watchdog was switched on.'
+                    : 'The watchdog was switched off — no loss limit will stop this bot from now on.',
+                evidence: { ...next },
+            }).catch(() => undefined);
+        }
+
+        // The runner reads the row it holds, so refresh its copy.
+        botRunner.refreshWatchdog(row.id, next);
+
+        res.status(200).json({ success: true, data: { config: next } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/** Every watchdog/bot event for this user — the studio's activity feed. */
+export const listBotEvents = async (req: AuthRequest, res: Response) => {
+    try {
+        const rows = await BotEvent.listByUser(req.user!.id, 40);
+        res.status(200).json({ success: true, data: rows });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

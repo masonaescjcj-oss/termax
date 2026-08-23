@@ -7,6 +7,7 @@
 import { evaluateLiveGate, gateRequirements } from './liveGate';
 import { computeTradeStats } from './tradeStats';
 import { initialBotState } from '../strategy/types';
+import { DEFAULT_WATCHDOG } from './watchdog';
 import { BotRow } from '../../models/Bot';
 
 let passed = 0;
@@ -28,7 +29,7 @@ const NOW = Date.UTC(2026, 7, 22, 12, 0);
 
 const rowAt = (startedDaysAgo: number, status: BotRow['status'] = 'FORWARD_TEST'): BotRow => ({
     id: 'b1', userId: 'u1', accountId: 'a1', name: 'g', spec: {} as any,
-    status, runState: initialBotState(), liveVolumeMode: 'MIN', origin: 'USER',
+    status, runState: initialBotState(), liveVolumeMode: 'MIN', origin: 'USER', watchdog: DEFAULT_WATCHDOG,
     startedAt: new Date(NOW - startedDaysAgo * DAY), liveStartedAt: null, stoppedAt: null,
     createdAt: new Date(0), updatedAt: new Date(0),
 });
