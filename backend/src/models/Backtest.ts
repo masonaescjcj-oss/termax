@@ -43,18 +43,35 @@ function toCamel(db: any): BacktestRow {
 }
 
 export const Backtest = {
-    async create(userId: string, name: string, spec: StrategySpec, fromMs: number, toMs: number, botId: string | null): Promise<BacktestRow> {
+    async create(userId: string, name: string, spec: StrategySpec, fromMs: number, toMs: number, botId: string | null, cacheKey?: string): Promise<BacktestRow> {
         const { data, error } = await supabase
             .from('backtests')
             .insert({
                 user_id: userId, bot_id: botId, name, spec,
                 from_ts: new Date(fromMs).toISOString(),
                 to_ts: new Date(toMs).toISOString(),
+                cache_key: cacheKey ?? null,
             })
             .select()
             .single();
         if (error) throw new Error(error.message);
         return toCamel(data);
+    },
+
+    /**
+     * A finished run of the identical spec over the identical window.
+     * The key is day-granular (see backtestCacheKey), so re-asking the
+     * same question the same day is free.
+     */
+    async findCached(userId: string, cacheKey: string): Promise<BacktestRow | null> {
+        const { data, error } = await supabase
+            .from('backtests').select('*')
+            .eq('user_id', userId).eq('cache_key', cacheKey).eq('status', 'DONE')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) throw new Error(error.message);
+        return data ? toCamel(data) : null;
     },
 
     async findById(id: string): Promise<BacktestRow | null> {

@@ -20,6 +20,7 @@ import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
 import { recordClosedTrade } from '../services/ai/statsRollup';
+import { evaluateRiskGuard, riskGuardConfig } from '../services/riskGuard';
 import { venueKindForAccount } from '../services/venues';
 import {
     findAccount, openLiveOrder, closeLivePosition, modifyLivePosition, getLivePositions,
@@ -1048,6 +1049,37 @@ export async function openSimulatedOrder(userId: string, params: SimOrderParams)
                 await user.save();
                 targetAccount = user.cTraderAccounts[user.cTraderAccounts.length - 1];
                 console.log(`✅ Auto-created demo account for user ${user.username}: ${newDemoId}`);
+            }
+
+            // ═══ RISK GUARD ═══
+            // The trader's own daily loss limit, set in calm and enforced
+            // here. Bots are exempt: they have their own watchdog, and a
+            // human lock must not silently change a bot's behaviour.
+            if (!botId) {
+                const guard = riskGuardConfig((user as any).riskGuard ?? (user as any).risk_guard);
+                if (guard.enabled) {
+                    try {
+                        const closed = await Position.find({ userId, status: 'CLOSED', accountId: targetAccount!.cTraderId });
+                        const open = await Position.find({ userId, status: 'OPEN', accountId: targetAccount!.cTraderId });
+                        const equity = accountMetrics(targetAccount!.balance ?? 0, open as any).equity;
+                        const state = evaluateRiskGuard(guard, closed as any, equity);
+                        if (state.locked) {
+                            return {
+                                status: 423,
+                                body: {
+                                    success: false,
+                                    message: state.fa,
+                                    messageEn: state.en,
+                                    riskLock: { ...state },
+                                },
+                            };
+                        }
+                    } catch (e: any) {
+                        // Fail OPEN: a guard that cannot read the record must
+                        // not block a trader who is within their limits.
+                        console.warn('[RiskGuard] check failed; order allowed:', e.message);
+                    }
+                }
             }
 
             const isPending = orderType !== 'MARKET';

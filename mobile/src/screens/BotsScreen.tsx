@@ -19,7 +19,7 @@ import { Text, TextInput } from '../components/Typography';
 import axios from 'axios';
 import {
     Bot as BotIcon, ChevronLeft, Play, Square, Trash2, Plus, Sparkles,
-    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart, Trophy, ShieldOff, Siren,
+    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart, Trophy, ShieldOff, Siren, Radar,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -49,7 +49,7 @@ export default function BotsScreen({ navigation }) {
     const { colors, isDark } = useTheme();
     const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
-    const [view, setView] = useState<'list' | 'builder' | 'report'>('list');
+    const [view, setView] = useState<'list' | 'builder' | 'report' | 'scan'>('list');
     const [bots, setBots] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -66,6 +66,8 @@ export default function BotsScreen({ navigation }) {
     const [report, setReport] = useState<any>(null);
     const [reportLoading, setReportLoading] = useState(false);
     const [savingWatchdog, setSavingWatchdog] = useState(false);
+    const [scan, setScan] = useState<any>(null);
+    const [scanLoading, setScanLoading] = useState(false);
 
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -140,6 +142,20 @@ export default function BotsScreen({ navigation }) {
                 { text: 'Delete', style: 'destructive', onPress: doDelete },
             ]);
         }
+    };
+
+    // Setup scanner: this bot's entry logic across its whole asset class.
+    const runScan = async (bot: any) => {
+        setView('scan');
+        setScan(null);
+        setScanLoading(true);
+        try {
+            const res = await api('post', `/api/v1/bots/${bot.id}/scan`);
+            if (res.data?.success) setScan(res.data.data);
+        } catch (e: any) {
+            showToast(e.response?.data?.message || 'Scan failed', 'error');
+            setView('list');
+        } finally { setScanLoading(false); }
     };
 
     const openReport = async (bot: any) => {
@@ -370,6 +386,10 @@ export default function BotsScreen({ navigation }) {
                             <TouchableOpacity style={styles.actionBtn} onPress={() => openReport(bot)}>
                                 <FileText color={colors.text} size={15} />
                                 <Text style={styles.actionBtnText}>Report</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.actionBtn} onPress={() => runScan(bot)}>
+                                <Radar color={colors.primary} size={15} />
+                                <Text style={[styles.actionBtnText, { color: colors.primary }]}>Scan</Text>
                             </TouchableOpacity>
                             {bot.status === 'STOPPED' && (
                                 <TouchableOpacity style={styles.actionBtn} disabled={busyBotId === bot.id} onPress={() => deleteBot(bot)}>
@@ -697,8 +717,78 @@ export default function BotsScreen({ navigation }) {
         );
     };
 
+    // ── scan view ───────────────────────────────────────────────────
+    const renderScan = () => (
+        <>
+            <Header title="Setup scanner" onBack={() => setView('list')} />
+            <ScrollView contentContainerStyle={styles.listContent}>
+                {scanLoading || !scan ? (
+                    <>
+                        <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />
+                        <Text style={[styles.noteText, { textAlign: 'center' }]}>در حال اجرای قواعد این ربات روی همه‌ی نمادهای هم‌خانواده…</Text>
+                    </>
+                ) : (
+                    <>
+                        <GlassView intensity={14} style={styles.sectionCard}>
+                            <Text style={styles.sectionTitle}>{scan.bot.name}</Text>
+                            <Text style={styles.noteText}>
+                                قواعد ورود این ربات روی {scan.scanned.length} نماد در تایم‌فریم {scan.timeframe} اجرا شد.
+                                فقط کندل‌های بسته‌شده و حداکثر {scan.lookbackBars} کندل اخیر شمرده می‌شود — سقف معامله‌ی روزانه و cooldown هم اعمال نشده، چون سؤال «آیا ستاپ وجود دارد؟» است نه «آیا ربات معامله می‌کرد؟».
+                            </Text>
+                        </GlassView>
+
+                        {scan.hits.length === 0 ? (
+                            <GlassView intensity={14} style={styles.sectionCard}>
+                                <Text style={styles.sectionTitle}>هیچ ستاپ فعالی نیست</Text>
+                                <Text style={styles.noteText}>روی هیچ‌کدام از {scan.scanned.length} نماد اسکن‌شده، شرط ورود در {scan.lookbackBars} کندل اخیر برقرار نشده.</Text>
+                            </GlassView>
+                        ) : scan.hits.map((h: any) => (
+                            <GlassView key={h.symbol} intensity={14} style={styles.sectionCard}>
+                                <View style={styles.cardTopRow}>
+                                    <View style={[styles.sideChip, { backgroundColor: h.side === 'BUY' ? 'rgba(8,153,129,0.16)' : 'rgba(242,54,69,0.14)' }]}>
+                                        <Text style={[styles.sideChipText, { color: h.side === 'BUY' ? colors.success : colors.danger }]}>{h.side}</Text>
+                                    </View>
+                                    <View style={{ flex: 1, marginLeft: 10 }}>
+                                        <Text style={styles.botName}>{h.symbol}</Text>
+                                        <Text style={styles.botMeta}>
+                                            {h.barsAgo === 0 ? 'کندل همین حالا بسته شد' : `${h.barsAgo} کندل پیش`} · {new Date(h.barTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                        </Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.chartBtn}
+                                        onPress={() => navigation.navigate('MainTabs', { screen: 'Chart', params: { symbol: h.symbol, ts: Date.now() } })}
+                                    >
+                                        <LineChart color={colors.primary} size={15} />
+                                        <Text style={[styles.actionBtnText, { color: colors.primary }]}>Chart</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={styles.statRow}>
+                                    <StatCell label="قیمت کندل" value={h.close} />
+                                    <StatCell label="حد ضرر" value={h.stopLoss} color={colors.danger} />
+                                    <StatCell label="حد سود" value={h.takeProfit ?? '—'} color={colors.success} />
+                                </View>
+                                {h.spreadPips !== null && <Text style={styles.checkLine}>اسپرد الان: {h.spreadPips.toFixed(1)} پیپ</Text>}
+                            </GlassView>
+                        ))}
+
+                        {Object.keys(scan.skipped ?? {}).length > 0 && (
+                            <GlassView intensity={14} style={styles.sectionCard}>
+                                <Text style={[styles.sectionTitle, { fontSize: 13 }]}>اسکن‌نشده</Text>
+                                {Object.entries(scan.skipped).slice(0, 8).map(([sym, why]: any) => (
+                                    <Text key={sym} style={styles.checkLine}>• {sym}: {String(why)}</Text>
+                                ))}
+                            </GlassView>
+                        )}
+                    </>
+                )}
+                <View style={{ height: 50 }} />
+            </ScrollView>
+        </>
+    );
+
     return (
         <SafeAreaView style={[styles.safeArea, { paddingTop: Platform.OS === 'ios' ? 0 : getTgSafeAreaTop() }]}>
+            {view === 'scan' && renderScan()}
             {view === 'list' && renderList()}
             {view === 'builder' && renderBuilder()}
             {view === 'report' && renderReport()}
@@ -766,6 +856,9 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         paddingVertical: 11, borderRadius: 12, marginTop: 10,
         backgroundColor: 'rgba(245,166,35,0.12)', borderWidth: 1, borderColor: 'rgba(245,166,35,0.35)',
     },
+    cardTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+    sideChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 9 },
+    sideChipText: { fontSize: 12, fontWeight: '800' },
     chartBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7,
         borderRadius: 18, backgroundColor: 'rgba(41,98,255,0.12)',

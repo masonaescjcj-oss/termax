@@ -21,6 +21,8 @@ import { botRunner } from '../services/bots/runner';
 import { evaluateLiveGate } from '../services/bots/liveGate';
 import { computeTradeStats } from '../services/bots/tradeStats';
 import { evaluateWatchdog, watchdogConfig } from '../services/bots/watchdog';
+import { MAX_SCAN_SYMBOLS, SCAN_LOOKBACK_BARS, scanSpec } from '../services/bots/scanner';
+import { knownSymbols } from '../config/instruments';
 import { accountMetrics } from '../services/pricing';
 import { validateSpec } from '../services/strategy/validate';
 import { limitsFor, planOf } from '../services/plans';
@@ -579,6 +581,54 @@ export const listBotEvents = async (req: AuthRequest, res: Response) => {
     try {
         const rows = await BotEvent.listByUser(req.user!.id, 40);
         res.status(200).json({ success: true, data: rows });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * SETUP SCANNER — run a bot's entry logic across many symbols at once.
+ *
+ * Defaults to the same asset class as the bot's own symbol (scanning a
+ * forex strategy on stocks tells nobody anything), and the client can
+ * pass its own symbol list — a watchlist, say. Costs one AI-quota
+ * message: the CPU is ours, but the feature is only worth having if it
+ * cannot be hammered.
+ */
+export const scanBot = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+
+        let symbols: string[] = Array.isArray(req.body?.symbols)
+            ? req.body.symbols.filter((s: any) => typeof s === 'string')
+            : [];
+
+        if (!symbols.length) {
+            // Same family as the bot's own instrument.
+            const own = row.spec.symbol;
+            const isCrypto = own.includes('/USDT') || own.includes('/BTC');
+            const isForex = /^[A-Z]{3}\/[A-Z]{3}$/.test(own) && !isCrypto;
+            symbols = knownSymbols().filter(sym => {
+                const crypto = sym.includes('/USDT') || sym.includes('/BTC');
+                const forex = /^[A-Z]{3}\/[A-Z]{3}$/.test(sym) && !crypto;
+                if (isCrypto) return crypto;
+                if (isForex) return forex;
+                return !crypto && !forex; // metals, indices, stocks
+            });
+        }
+
+        const result = await scanSpec(row.spec, symbols.slice(0, MAX_SCAN_SYMBOLS));
+        res.status(200).json({
+            success: true,
+            data: {
+                bot: { id: row.id, name: row.name, symbol: row.spec.symbol, timeframe: row.spec.timeframe },
+                lookbackBars: SCAN_LOOKBACK_BARS,
+                ...result,
+            },
+        });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

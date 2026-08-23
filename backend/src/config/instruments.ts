@@ -289,6 +289,11 @@ function inferSpec(symbol: string): InstrumentSpec {
     return stock(symbol);
 }
 
+/** Every instrument we carry a real spec for — the scanner's universe. */
+export function knownSymbols(): string[] {
+    return Object.keys(SPECS);
+}
+
 const inferred = new Map<string, InstrumentSpec>();
 
 /** Look up an instrument spec. Never returns undefined. */

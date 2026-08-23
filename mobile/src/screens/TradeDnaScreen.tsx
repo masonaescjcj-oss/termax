@@ -8,12 +8,12 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     View, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView,
-    Platform, ActivityIndicator, RefreshControl,
+    Platform, ActivityIndicator, RefreshControl, Switch, Alert,
 } from 'react-native';
 import { Text } from '../components/Typography';
 import axios from 'axios';
 import {
-    ChevronLeft, Dna, AlertTriangle, Info, Flame, Microscope, Clock,
+    ChevronLeft, Dna, AlertTriangle, Info, Flame, Microscope, Clock, ShieldCheck, ShieldOff, Lock,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { useTheme } from '../theme/ThemeContext';
@@ -39,6 +39,8 @@ export default function TradeDnaScreen({ navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [autopsy, setAutopsy] = useState<any>(null);
     const [autopsyLoading, setAutopsyLoading] = useState(false);
+    const [guard, setGuard] = useState<any>(null);
+    const [savingGuard, setSavingGuard] = useState(false);
 
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -48,11 +50,13 @@ export default function TradeDnaScreen({ navigation }) {
     const load = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const [dnaRes, posRes] = await Promise.all([
+            const [dnaRes, posRes, guardRes] = await Promise.all([
                 api('/api/v1/insights/dna'),
                 api('/api/v1/trade/positions?status=CLOSED').catch(() => ({ data: { data: [] } })),
+                api('/api/v1/insights/risk-guard').catch(() => ({ data: { data: null } })),
             ]);
             if (dnaRes.data?.success) setProfile(dnaRes.data.data);
+            if (guardRes.data?.data) setGuard(guardRes.data.data);
             const rows = posRes.data?.data ?? posRes.data ?? [];
             setClosed((Array.isArray(rows) ? rows : [])
                 .filter((p: any) => p.status === 'CLOSED')
@@ -90,6 +94,26 @@ export default function TradeDnaScreen({ navigation }) {
             showToast(e.response?.data?.message || 'Autopsy unavailable for this trade', 'error');
             setView('dna');
         } finally { setAutopsyLoading(false); }
+    };
+
+    // The trader's own daily loss limit. Turning it ON is the point of the
+    // feature; turning it OFF is instant, because a guard you cannot leave
+    // is a trap, not a safety net.
+    const setGuardEnabled = async (enabled: boolean) => {
+        setSavingGuard(true);
+        try {
+            const token = await getItemAsync('accessToken');
+            const res = await axios.post(`${BACKEND_URL}/api/v1/insights/risk-guard`, { enabled }, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.data?.success) {
+                setGuard((g: any) => g ? { ...g, config: res.data.data.config } : g);
+                showToast(enabled ? 'محافظ ریسک روشن شد' : 'محافظ ریسک خاموش شد', enabled ? 'success' : 'info');
+                load(true);
+            }
+        } catch (e: any) {
+            showToast(e.response?.data?.message || 'Could not change the guard', 'error');
+        } finally { setSavingGuard(false); }
     };
 
     const SevIcon = ({ severity }: any) => severity === 'ALERT'
@@ -146,6 +170,56 @@ export default function TradeDnaScreen({ navigation }) {
                         {profile.trades < 10 && (
                             <GlassView intensity={14} style={styles.card}>
                                 <Text style={styles.noteText}>هنوز {profile.trades} معامله‌ی بسته دارید. با معاملات بیشتر، الگوهای رفتاری‌تان اینجا شمرده می‌شود — نه حدس زده.</Text>
+                            </GlassView>
+                        )}
+
+                        {guard && (
+                            <GlassView intensity={14} style={styles.card}>
+                                <View style={[styles.cardHeader, { justifyContent: 'space-between' }]}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        {guard.config.enabled
+                                            ? <ShieldCheck color={colors.success} size={18} />
+                                            : <ShieldOff color={colors.textSecondary} size={18} />}
+                                        <Text style={styles.cardTitle}>محافظ ریسک روزانه</Text>
+                                    </View>
+                                    <Switch
+                                        value={!!guard.config.enabled}
+                                        disabled={savingGuard}
+                                        onValueChange={setGuardEnabled}
+                                        trackColor={{ false: isDark ? '#3A3F4B' : '#CBD5E1', true: 'rgba(8,153,129,0.45)' }}
+                                        thumbColor={guard.config.enabled ? colors.success : '#F1F5F9'}
+                                    />
+                                </View>
+                                {guard.config.enabled ? (
+                                    <>
+                                        <View style={styles.factsRow}>
+                                            <View style={styles.factCell}>
+                                                <Text style={styles.factLabel}>ضرر امروز</Text>
+                                                <Text style={[styles.factValue, { color: guard.state.readings.todayRealised < 0 ? colors.danger : colors.success }]}>
+                                                    {money(guard.state.readings.todayRealised)}
+                                                </Text>
+                                            </View>
+                                            <View style={styles.factCell}>
+                                                <Text style={styles.factLabel}>سقف {guard.config.maxDailyLossPct}٪</Text>
+                                                <Text style={styles.factValue}>{guard.state.readings.limitMoney !== null ? money(guard.state.readings.limitMoney) : '—'}</Text>
+                                            </View>
+                                            <View style={styles.factCell}>
+                                                <Text style={styles.factLabel}>معاملات امروز</Text>
+                                                <Text style={styles.factValue}>{guard.state.readings.todayTrades}</Text>
+                                            </View>
+                                        </View>
+                                        {guard.state.locked ? (
+                                            <View style={styles.lockedBox}>
+                                                <Lock color={colors.danger} size={15} />
+                                                <Text style={[styles.findingText, { color: colors.danger }]}>{guard.state.fa}</Text>
+                                            </View>
+                                        ) : (
+                                            <Text style={styles.noteText}>{guard.state.fa} — با رسیدن به سقف، سفارش جدید تا نیمه‌شب UTC رد می‌شود؛ پوزیشن‌های باز با حد ضرر خودشان می‌مانند.</Text>
+                                        )}
+                                    </>
+                                ) : (
+                                    <Text style={styles.noteText}>خاموش است. با روشن کردنش، وقتی ضرر امروزتان به سقف تعیین‌شده برسد، اپ تا فردا سفارش جدید نمی‌پذیرد — تصمیمی که در آرامش گرفته می‌شود، نه وسط ضرر.</Text>
+                                )}
                             </GlassView>
                         )}
 
@@ -277,6 +351,10 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     tradeSymbol: { fontSize: 13.5, fontWeight: '600', color: colors.text },
     tradeMeta: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
     tradePnl: { fontSize: 14.5, fontWeight: '700' },
+    lockedBox: {
+        flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: 10,
+        borderRadius: 10, backgroundColor: 'rgba(242,54,69,0.10)', borderWidth: 1, borderColor: 'rgba(242,54,69,0.35)',
+    },
     factsRow: { flexDirection: 'row', marginTop: 12 },
     factCell: { flex: 1 },
     factLabel: { fontSize: 11, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl' },

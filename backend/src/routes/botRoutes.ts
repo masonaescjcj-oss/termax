@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createBot, listBots, startBot, stopBot, deleteBot, getBotReport, goLiveBot, buildBot, getBotChart, exportBot, importBot, getWatchdog, updateWatchdog, listBotEvents } from '../controllers/botsController';
+import { createBot, listBots, startBot, stopBot, deleteBot, getBotReport, goLiveBot, buildBot, getBotChart, exportBot, importBot, getWatchdog, updateWatchdog, listBotEvents, scanBot } from '../controllers/botsController';
 import { verifyToken } from '../middleware/auth';
 
 const router = Router();
@@ -13,6 +13,7 @@ router.post('/:id/start', verifyToken, startBot);
 router.post('/:id/stop', verifyToken, stopBot);
 router.get('/events', verifyToken, listBotEvents);
 router.get('/:id/report', verifyToken, getBotReport);
+router.post('/:id/scan', verifyToken, scanBot);
 router.get('/:id/watchdog', verifyToken, getWatchdog);
 router.post('/:id/watchdog', verifyToken, updateWatchdog);
 router.get('/:id/chart', verifyToken, getBotChart);

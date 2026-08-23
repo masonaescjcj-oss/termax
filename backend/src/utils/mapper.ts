@@ -16,6 +16,7 @@ export const mapUserToCamel = (dbUser: any): any => {
         activeNft: dbUser.active_nft,
         role: dbUser.role,
         plan: dbUser.plan || 'FREE',
+        riskGuard: dbUser.risk_guard || {},
         telegramId: dbUser.telegram_id,
         referralCode: dbUser.referral_code,
         referredBy: dbUser.referred_by,
@@ -49,6 +50,7 @@ export const mapUserToSnake = (appUser: any): any => {
     if (appUser.activeNft !== undefined) snake.active_nft = appUser.activeNft;
     if (appUser.role !== undefined) snake.role = appUser.role;
     if (appUser.plan !== undefined) snake.plan = appUser.plan;
+    if (appUser.riskGuard !== undefined) snake.risk_guard = appUser.riskGuard;
     if (appUser.telegramId !== undefined) snake.telegram_id = appUser.telegramId;
     if (appUser.referralCode !== undefined) snake.referral_code = appUser.referralCode;
     if (appUser.referredBy !== undefined) snake.referred_by = appUser.referredBy;

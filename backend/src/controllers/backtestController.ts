@@ -18,6 +18,7 @@ import { getSpec as instrumentSpec } from '../config/instruments';
 import { rateToAccount } from '../services/pricing';
 import { backfillRange, coverage, MAX_BACKFILL_DAYS } from '../services/candles/backfill';
 import { backtestPool } from '../services/backtest/pool';
+import { backtestCacheKey } from '../services/backtest/cacheKey';
 import { validateSpec } from '../services/strategy/validate';
 import { StrategySpec } from '../services/strategy/types';
 
@@ -63,7 +64,21 @@ export const createBacktest = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: `You have ${stored} stored backtests (plan limit ${cap}). Delete some before running more.` });
         }
 
-        const row = await Backtest.create(req.user!.id, spec.name, spec, fromMs, toMs, linkedBotId);
+        // Same question, same day? Hand back the stored answer instead of
+        // spending a worker slot on it.
+        const cacheKey = backtestCacheKey(spec, fromMs, toMs, balance);
+        try {
+            const cached = await Backtest.findCached(req.user!.id, cacheKey);
+            if (cached) {
+                return res.status(200).json({
+                    success: true,
+                    cached: true,
+                    data: { id: cached.id, status: cached.status, from: fromMs, to: toMs, summary: cached.summary },
+                });
+            }
+        } catch { /* a cache miss must never fail the request */ }
+
+        const row = await Backtest.create(req.user!.id, spec.name, spec, fromMs, toMs, linkedBotId, cacheKey);
         res.status(200).json({ success: true, data: { id: row.id, status: row.status, from: fromMs, to: toMs } });
 
         // The response is gone; everything from here lands in the row.

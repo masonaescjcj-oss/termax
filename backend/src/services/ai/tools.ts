@@ -22,6 +22,7 @@ import {
     accountMetrics, getQuote, getSpreadPips, marginRequired, pipValue, unrealizedPnL,
 } from '../pricing';
 import { backtestPool } from '../backtest/pool';
+import { backtestCacheKey } from '../backtest/cacheKey';
 import { backfillRange, coverage } from '../candles/backfill';
 import { readBarsTf } from '../candles/store';
 import { feedRouter } from '../feeds';
@@ -263,7 +264,22 @@ export const AI_TOOLS: AiTool[] = [
                 return err(`Not enough history for ${spec.symbol} to backtest. Crypto and cTrader-covered symbols work best.`);
             }
 
-            const row = await Backtest.create(userId, spec.name, spec, fromMs, toMs, null);
+            const cacheKey = backtestCacheKey(spec, fromMs, toMs, 10_000);
+            try {
+                const cached = await Backtest.findCached(userId, cacheKey);
+                if (cached?.summary?.stats) {
+                    const cs = cached.summary.stats;
+                    return {
+                        backtestId: cached.id, cached: true,
+                        grade: cached.summary.grade, honestyScore: cached.summary.honestyScore,
+                        netProfit: cs.netProfit, returnPct: cs.returnPct, trades: cs.trades,
+                        winRate: cs.winRate, profitFactor: cs.profitFactor, expectancy: cs.expectancy,
+                        maxDrawdownPct: cs.maxDrawdownPct, warnings: cached.summary.warnings ?? [],
+                    };
+                }
+            } catch { /* fall through to a fresh run */ }
+
+            const row = await Backtest.create(userId, spec.name, spec, fromMs, toMs, null, cacheKey);
             try {
                 const out = await backtestPool.run(userId, {
                     spec, fromMs, toMs, options: { startBalance: 10_000 },

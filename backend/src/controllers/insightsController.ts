@@ -9,8 +9,10 @@
 
 import { Response } from 'express';
 import Position from '../models/Position';
+import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
-import { getSpreadPips } from '../services/pricing';
+import { accountMetrics, getSpreadPips } from '../services/pricing';
+import { evaluateRiskGuard, riskGuardConfig } from '../services/riskGuard';
 import { computeTradeDna, DnaProfile, DnaTrade } from '../services/insights/tradeDna';
 import { runAutopsy } from '../services/insights/autopsy';
 
@@ -148,6 +150,42 @@ export const getPreTradeCheck = async (req: AuthRequest, res: Response) => {
         }
 
         res.status(200).json({ success: true, data: { warnings } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * RISK GUARD — the trader's own daily loss limit: read it, set it, see
+ * whether it is currently locking new orders.
+ */
+export const getRiskGuard = async (req: AuthRequest, res: Response) => {
+    try {
+        const user = await User.findById(req.user!.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const cfg = riskGuardConfig((user as any).riskGuard);
+        const account = user.cTraderAccounts?.find((a: any) => a.accountType === 'DEMO') || user.cTraderAccounts?.[0];
+        const closed = await Position.find({ userId: req.user!.id, status: 'CLOSED', accountId: account?.cTraderId });
+        const open = await Position.find({ userId: req.user!.id, status: 'OPEN', accountId: account?.cTraderId });
+        const equity = accountMetrics(account?.balance ?? 0, open as any).equity;
+        res.status(200).json({
+            success: true,
+            data: { config: cfg, state: evaluateRiskGuard(cfg, closed as any, equity) },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+export const updateRiskGuard = async (req: AuthRequest, res: Response) => {
+    try {
+        const user = await User.findById(req.user!.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const next = riskGuardConfig({ ...riskGuardConfig((user as any).riskGuard), ...(req.body ?? {}) });
+        (user as any).riskGuard = next;
+        user.markModified?.('riskGuard');
+        await user.save();
+        res.status(200).json({ success: true, data: { config: next } });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
