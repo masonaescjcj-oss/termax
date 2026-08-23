@@ -312,7 +312,7 @@ export const AI_TOOLS: AiTool[] = [
             if (venueKindForAccount(account) === 'CTRADER') return err('Bots start on the simulated account; live comes only after a completed forward test.');
             const existing = await Bot.listByUser(userId);
             if (existing.length >= 20) return err('The user already has 20 bots — one must be deleted first.');
-            const row = await Bot.create(userId, account.cTraderId, check.spec!.name, check.spec!);
+            const row = await Bot.create(userId, account.cTraderId, check.spec!.name, check.spec!, 'AI');
             return { botId: row.id, name: row.name, status: row.status };
         },
     },
@@ -442,6 +442,7 @@ export const AI_TOOLS: AiTool[] = [
                 expr: String(args.expr),
                 pane: args?.pane === 'price' ? 'price' : 'separate',
                 color: typeof args?.color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(args.color) ? args.color : '#F5A623',
+                origin: 'AI',
             });
             return { indicatorId: row.id, name: row.name, pane: row.pane, note: 'Saved and enabled — it will draw on the chart automatically.' };
         },

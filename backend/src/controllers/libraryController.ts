@@ -130,7 +130,7 @@ export const cloneStrategy = async (req: AuthRequest, res: Response) => {
         }
 
         const name = `${row.title}`.slice(0, 60);
-        const bot = await Bot.create(req.user!.id, account.cTraderId, name, row.spec);
+        const bot = await Bot.create(req.user!.id, account.cTraderId, name, row.spec, 'CLONE');
         await PublishedStrategy.bumpClones(row.id);
         res.status(200).json({
             success: true,

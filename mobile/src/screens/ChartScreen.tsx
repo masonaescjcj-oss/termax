@@ -9,7 +9,7 @@ import { WebView } from 'react-native-webview';
 import io from 'socket.io-client';
 import axios from 'axios';
 import { getItemAsync, setItemAsync } from '../utils/storage';
-import { ChevronDown, ChevronUp, ChevronLeft, X, Ruler, Eraser, Trash2, Target, Maximize, Minimize, PenTool, AlignLeft, Activity, Info, BarChart2, TrendingUp, Clock, Layers, Lightbulb, Share, MoreVertical, Check, Paperclip, Rocket, Mic, Bot, ShieldAlert, Sliders, Zap, TrendingDown, Search, Eye, Menu } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, ChevronLeft, X, Ruler, Eraser, Trash2, Target, Maximize, Minimize, PenTool, AlignLeft, Activity, Info, BarChart2, TrendingUp, Clock, Layers, Lightbulb, Share, MoreVertical, Check, Paperclip, Rocket, Mic, Bot, ShieldAlert, Sliders, Zap, TrendingDown, Search, Eye, Menu, ListOrdered } from 'lucide-react-native';
 import BlurView from '../components/GlassView';
 import CustomBlurModal from '../components/CustomBlurModal';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -365,7 +365,17 @@ const getChartHtml = (symbol: string, colors: any, initialDataStr: string = "[]"
                 const entry = coordinates[0];
                 const exit = coordinates[1];
                 const isBuy = t.side === 'BUY';
+                const zoneAlpha = win ? 'rgba(8,153,129,0.10)' : 'rgba(242,54,69,0.10)';
                 const figures = [
+                    // The P/L zone: a translucent box spanning entry -> exit in
+                    // both time and price, drawn under everything else.
+                    { type: 'rect', attrs: {
+                        x: Math.min(entry.x, exit.x),
+                        y: Math.min(entry.y, exit.y),
+                        width: Math.max(2, Math.abs(exit.x - entry.x)),
+                        height: Math.max(2, Math.abs(exit.y - entry.y)),
+                      },
+                      styles: { style: 'fill', color: zoneAlpha } },
                     { type: 'line', attrs: { coordinates: [entry, exit] },
                       styles: { style: 'dashed', color: lineColor, size: 1.5, dashedValue: [4, 3] } },
                     { type: 'polygon', attrs: { coordinates: isBuy
@@ -1169,6 +1179,7 @@ export default function ChartScreen({ navigation, route }: any) {
           if (cancelled) return;
           sendMessageToChart(JSON.stringify({ type: 'botTrades', trades: d.trades ?? [] }));
           sendMessageToChart(JSON.stringify({ type: 'botLevels', open: d.open ?? null }));
+          setLoadedTrades((d.trades ?? []).slice().reverse());
           for (const ind of d.indicators ?? []) {
             const mapped = mapSpecIndicator(ind.def);
             if (mapped) {
@@ -1222,6 +1233,7 @@ export default function ChartScreen({ navigation, route }: any) {
           // Cap what we draw: a 2,000-trade backtest as overlays would
           // wedge the WebView; the most recent 200 tell the story.
           sendMessageToChart(JSON.stringify({ type: 'botTrades', trades: trades.slice(-200) }));
+          setLoadedTrades(trades.slice(-200).reverse());
           // The spec's own indicators — the strategy's eyes on its chart.
           for (const [nm, def] of Object.entries(row.spec?.indicators ?? {})) {
             const mapped = mapSpecIndicator(def);
@@ -1876,6 +1888,11 @@ export default function ChartScreen({ navigation, route }: any) {
   // order goes out — worst hour, minutes-after-a-loss, unusual size, wide
   // spread. Warnings with reasons, never blocks.
   const [preTradeWarnings, setPreTradeWarnings] = useState<any[]>([]);
+
+  // Trades currently drawn on the chart (bot or backtest view) — feeds the
+  // toggleable trade-list panel in the toolbar.
+  const [loadedTrades, setLoadedTrades] = useState<any[]>([]);
+  const [tradesPanelOpen, setTradesPanelOpen] = useState(false);
   useEffect(() => {
     if (!isOrderPanelOpen) { setPreTradeWarnings([]); return; }
     let cancelled = false;
@@ -2650,12 +2667,52 @@ export default function ChartScreen({ navigation, route }: any) {
                   <TouchableOpacity onPress={() => setIsIndicatorsOpen(true)} style={styles.iconButton}><Sliders color={colors.text} size={20} /></TouchableOpacity>
                 </BlurView>
               )}
+              {loadedTrades.length > 0 && (
+                <BlurView experimentalBlurMethod="regular" intensity={isDark ? 50 : 90} tint={colors.blurTint} style={[styles.pillContainer, pillStyle, tradesPanelOpen && { borderColor: colors.primary, borderWidth: 1 }]}>
+                  <TouchableOpacity onPress={() => setTradesPanelOpen(o => !o)} style={styles.iconButton}>
+                    <ListOrdered color={tradesPanelOpen ? colors.primary : colors.text} size={20} />
+                  </TouchableOpacity>
+                </BlurView>
+              )}
               <BlurView experimentalBlurMethod="regular" intensity={isDark ? 50 : 90} tint={colors.blurTint} style={[styles.pillContainer, pillStyle]}>
                 <TouchableOpacity onPress={() => setIsChartMenuOpen(true)} style={styles.iconButton}>
                   <Menu color={colors.text} size={20} />
                 </TouchableOpacity>
               </BlurView>
             </View>
+          </View>
+        )}
+
+        {tradesPanelOpen && loadedTrades.length > 0 && (
+          <View style={{ position: 'absolute', left: 8, right: 8, bottom: 86, maxHeight: '42%', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: colors.border, backgroundColor: isDark ? 'rgba(8,10,14,0.96)' : 'rgba(255,255,255,0.97)', zIndex: 60 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+              <ListOrdered color={colors.primary} size={15} />
+              <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13, marginLeft: 7 }}>Trades ({loadedTrades.length})</Text>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity onPress={() => setTradesPanelOpen(false)} style={{ padding: 4 }}>
+                <X color={colors.textMuted} size={17} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {loadedTrades.map((t: any, i: number) => {
+                const win = (t.netProfit ?? t.pips ?? 0) >= 0;
+                return (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                    <Text style={{ color: t.side === 'BUY' ? colors.success : colors.danger, fontWeight: '800', fontSize: 12, width: 40 }}>{t.side}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontSize: 12 }}>{t.entryPrice} → {t.exitPrice}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 10.5, marginTop: 1 }}>
+                        {t.entryTime ? new Date(t.entryTime).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                        {t.exitReason ? ` · ${t.exitReason}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={{ color: win ? colors.success : colors.danger, fontWeight: '700', fontSize: 12.5 }}>
+                      {typeof t.netProfit === 'number' ? `${win ? '+' : '-'}$${Math.abs(t.netProfit).toFixed(2)}` : `${win ? '+' : ''}${t.pips} pips`}
+                    </Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
           </View>
         )}
 

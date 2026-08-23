@@ -79,7 +79,7 @@ const T0 = Date.UTC(2026, 3, 8, 10, 0, 0);
 const row = (id: string, spec: StrategySpec) => ({
     id, userId: 'user-1', accountId: 'acc-1', name: spec.name, spec,
     status: 'FORWARD_TEST' as const, runState: initialBotState(),
-    liveVolumeMode: 'MIN' as const,
+    liveVolumeMode: 'MIN' as const, origin: 'USER' as const,
     startedAt: null, liveStartedAt: null, stoppedAt: null, createdAt: new Date(0), updatedAt: new Date(0),
 });
 

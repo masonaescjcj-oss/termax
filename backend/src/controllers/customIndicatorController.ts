@@ -134,3 +134,68 @@ export const indicatorValues = async (req: AuthRequest, res: Response) => {
         res.status(500).json({ success: false, error: e.message });
     }
 };
+
+export const exportIndicator = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await CustomIndicator.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Indicator not found' });
+        }
+        const payload = {
+            format: 'termax-indicator',
+            version: 1,
+            name: row.name,
+            expr: row.expr,
+            pane: row.pane,
+            color: row.color,
+            exportedAt: new Date().toISOString(),
+        };
+        const filename = `${row.name.replace(/[^A-Za-z0-9\u0600-\u06FF_-]+/g, '_').slice(0, 40) || 'indicator'}.termax-indicator.json`;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.status(200).send(JSON.stringify(payload, null, 2));
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+export const importIndicator = async (req: AuthRequest, res: Response) => {
+    try {
+        let payload = req.body?.payload ?? req.body;
+        if (typeof payload === 'string') {
+            try {
+                payload = JSON.parse(payload);
+            } catch {
+                return res.status(400).json({ success: false, message: 'The file is not valid JSON.' });
+            }
+        }
+        const name = String(payload?.name ?? '').trim();
+        if (name.length < 2 || name.length > 40) {
+            return res.status(400).json({ success: false, message: 'The file must carry a 2-40 character name.' });
+        }
+        const check = parseExpr(String(payload?.expr ?? ''));
+        if (!check.ok) {
+            return res.status(400).json({ success: false, message: 'Invalid expression in the file', errors: check.errors });
+        }
+        const existing = await CustomIndicator.listByUser(req.user!.id);
+        const user = await User.findById(req.user!.id);
+        const cap = limitsFor(user).maxCustomIndicators;
+        if (existing.length >= cap) {
+            return res.status(400).json({
+                success: false,
+                message: `Your ${planOf(user)} plan allows ${cap} custom indicators.`,
+                paywall: planOf(user) === 'FREE',
+            });
+        }
+        const row = await CustomIndicator.create(req.user!.id, {
+            name,
+            expr: String(payload.expr),
+            pane: payload?.pane === 'price' ? 'price' : 'separate',
+            color: typeof payload?.color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(payload.color) ? payload.color : '#F5A623',
+            origin: 'IMPORT',
+        });
+        res.status(200).json({ success: true, data: row });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};

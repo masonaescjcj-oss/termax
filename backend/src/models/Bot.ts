@@ -18,6 +18,8 @@ export interface BotRow {
     runState: BotState;
     /** How live orders are sized: 'MIN' = instrument minimum, 'SPEC' = the spec's sizing. */
     liveVolumeMode: 'MIN' | 'SPEC';
+    /** USER (hand-built) / AI (MaxAI or the builder) / IMPORT / CLONE. */
+    origin: 'USER' | 'AI' | 'IMPORT' | 'CLONE';
     startedAt: Date | null;
     liveStartedAt: Date | null;
     stoppedAt: Date | null;
@@ -37,6 +39,7 @@ function toCamel(db: any): BotRow {
             ? db.run_state
             : initialBotState(),
         liveVolumeMode: db.live_volume_mode === 'SPEC' ? 'SPEC' : 'MIN',
+        origin: ['AI', 'IMPORT', 'CLONE'].includes(db.origin) ? db.origin : 'USER',
         startedAt: db.started_at ? new Date(db.started_at) : null,
         liveStartedAt: db.live_started_at ? new Date(db.live_started_at) : null,
         stoppedAt: db.stopped_at ? new Date(db.stopped_at) : null,
@@ -46,10 +49,10 @@ function toCamel(db: any): BotRow {
 }
 
 export const Bot = {
-    async create(userId: string, accountId: string, name: string, spec: StrategySpec): Promise<BotRow> {
+    async create(userId: string, accountId: string, name: string, spec: StrategySpec, origin: 'USER' | 'AI' | 'IMPORT' | 'CLONE' = 'USER'): Promise<BotRow> {
         const { data, error } = await supabase
             .from('bots')
-            .insert({ user_id: userId, account_id: accountId, name, spec, run_state: initialBotState() })
+            .insert({ user_id: userId, account_id: accountId, name, spec, run_state: initialBotState(), origin })
             .select()
             .single();
         if (error) throw new Error(error.message);

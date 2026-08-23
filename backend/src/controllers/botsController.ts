@@ -343,7 +343,7 @@ export const buildBot = async (req: AuthRequest, res: Response) => {
             if (account?.cTraderId && venueKindForAccount(account) !== 'CTRADER') {
                 const existing = await Bot.listByUser(req.user!.id);
                 if (existing.length < limitsFor(user).maxBots) {
-                    const row = await Bot.create(req.user!.id, account.cTraderId, result.spec!.name, result.spec!);
+                    const row = await Bot.create(req.user!.id, account.cTraderId, result.spec!.name, result.spec!, 'AI');
                     botId = row.id;
                 }
             }
@@ -412,6 +412,80 @@ export const getBotChart = async (req: AuthRequest, res: Response) => {
                 trades,
                 open,
             },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * EXPORT / IMPORT — a bot as a portable file.
+ *
+ * The file is the spec plus metadata, nothing else: no run state, no
+ * account ids, no credentials. Import runs the FULL validator — a file is
+ * just another untrusted spec source, exactly like the AI's output.
+ */
+export const exportBot = async (req: AuthRequest, res: Response) => {
+    try {
+        const row = await Bot.findById(String(req.params.id));
+        if (!row || row.userId !== req.user!.id) {
+            return res.status(404).json({ success: false, message: 'Bot not found' });
+        }
+        const payload = {
+            format: 'termax-bot',
+            version: 1,
+            name: row.name,
+            spec: row.spec,
+            exportedAt: new Date().toISOString(),
+        };
+        const filename = `${row.name.replace(/[^A-Za-z0-9\u0600-\u06FF_-]+/g, '_').slice(0, 40) || 'bot'}.termax-bot.json`;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.status(200).send(JSON.stringify(payload, null, 2));
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+export const importBot = async (req: AuthRequest, res: Response) => {
+    try {
+        let payload = req.body?.payload ?? req.body;
+        if (typeof payload === 'string') {
+            try {
+                payload = JSON.parse(payload);
+            } catch {
+                return res.status(400).json({ success: false, message: 'The file is not valid JSON.' });
+            }
+        }
+        // Accept the wrapped export format or a bare spec.
+        const rawSpec = payload?.format === 'termax-bot' ? payload.spec : payload?.spec ?? payload;
+        const check = validateSpec(rawSpec);
+        if (!check.ok) {
+            return res.status(400).json({ success: false, message: 'Invalid strategy spec in the file', errors: check.errors });
+        }
+
+        const user = await User.findById(req.user!.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const account = findAccount(user, undefined);
+        if (!account?.cTraderId || venueKindForAccount(account) === 'CTRADER') {
+            return res.status(400).json({ success: false, message: 'Importing needs a simulated account to attach the bot to.' });
+        }
+        const existing = await Bot.listByUser(req.user!.id);
+        const maxBots = limitsFor(user).maxBots;
+        if (existing.length >= maxBots) {
+            return res.status(400).json({
+                success: false,
+                message: `Your ${planOf(user)} plan allows ${maxBots} bots. Delete one, or upgrade for more.`,
+                paywall: planOf(user) === 'FREE',
+            });
+        }
+
+        const name = (typeof payload?.name === 'string' && payload.name.trim() ? payload.name.trim() : check.spec!.name).slice(0, 60);
+        const row = await Bot.create(req.user!.id, account.cTraderId, name, check.spec!, 'IMPORT');
+        res.status(200).json({
+            success: true,
+            message: 'Imported. It starts STOPPED — backtest and forward test it yourself before trusting it.',
+            data: row,
         });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });

@@ -21,6 +21,7 @@ import BotsScreen from '../screens/BotsScreen';
 import TradeDnaScreen from '../screens/TradeDnaScreen';
 import LibraryScreen from '../screens/LibraryScreen';
 import ReplayScreen from '../screens/ReplayScreen';
+import AiStudioScreen from '../screens/AiStudioScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { isTelegram } from '../config';
 
@@ -386,6 +387,7 @@ export default function RootNavigator() {
                 <Stack.Screen name="TradeDna" component={TradeDnaScreen} />
                 <Stack.Screen name="Library" component={LibraryScreen} />
                 <Stack.Screen name="Replay" component={ReplayScreen} />
+                <Stack.Screen name="AiStudio" component={AiStudioScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

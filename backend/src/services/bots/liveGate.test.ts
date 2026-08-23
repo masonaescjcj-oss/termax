@@ -28,7 +28,7 @@ const NOW = Date.UTC(2026, 7, 22, 12, 0);
 
 const rowAt = (startedDaysAgo: number, status: BotRow['status'] = 'FORWARD_TEST'): BotRow => ({
     id: 'b1', userId: 'u1', accountId: 'a1', name: 'g', spec: {} as any,
-    status, runState: initialBotState(), liveVolumeMode: 'MIN',
+    status, runState: initialBotState(), liveVolumeMode: 'MIN', origin: 'USER',
     startedAt: new Date(NOW - startedDaysAgo * DAY), liveStartedAt: null, stoppedAt: null,
     createdAt: new Date(0), updatedAt: new Date(0),
 });
