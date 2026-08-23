@@ -20,10 +20,11 @@ import { botRunner } from '../services/bots/runner';
 import { evaluateLiveGate } from '../services/bots/liveGate';
 import { computeTradeStats } from '../services/bots/tradeStats';
 import { validateSpec } from '../services/strategy/validate';
+import { limitsFor, planOf } from '../services/plans';
 import { venueKindForAccount } from '../services/venues';
 import { findAccount } from './liveTrade';
 
-const MAX_BOTS_PER_USER = 20;
+
 
 export const createBot = async (req: AuthRequest, res: Response) => {
     try {
@@ -51,8 +52,13 @@ export const createBot = async (req: AuthRequest, res: Response) => {
         }
 
         const existing = await Bot.listByUser(req.user!.id);
-        if (existing.length >= MAX_BOTS_PER_USER) {
-            return res.status(400).json({ success: false, message: `You can keep at most ${MAX_BOTS_PER_USER} bots. Delete one first.` });
+        const maxBots = limitsFor(user).maxBots;
+        if (existing.length >= maxBots) {
+            return res.status(400).json({
+                success: false,
+                message: `Your ${planOf(user)} plan allows ${maxBots} bots. Delete one, or upgrade for more.`,
+                paywall: planOf(user) === 'FREE',
+            });
         }
 
         const row = await Bot.create(req.user!.id, account.cTraderId, check.spec!.name, check.spec!);
@@ -336,7 +342,7 @@ export const buildBot = async (req: AuthRequest, res: Response) => {
             const account = findAccount(user, undefined);
             if (account?.cTraderId && venueKindForAccount(account) !== 'CTRADER') {
                 const existing = await Bot.listByUser(req.user!.id);
-                if (existing.length < MAX_BOTS_PER_USER) {
+                if (existing.length < limitsFor(user).maxBots) {
                     const row = await Bot.create(req.user!.id, account.cTraderId, result.spec!.name, result.spec!);
                     botId = row.id;
                 }

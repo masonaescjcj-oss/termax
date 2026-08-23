@@ -9,7 +9,9 @@
  */
 
 import { Response } from 'express';
+import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
+import { limitsFor } from '../services/plans';
 import Backtest from '../models/Backtest';
 import Bot from '../models/Bot';
 import { getSpec as instrumentSpec } from '../config/instruments';
@@ -19,7 +21,7 @@ import { backtestPool } from '../services/backtest/pool';
 import { validateSpec } from '../services/strategy/validate';
 import { StrategySpec } from '../services/strategy/types';
 
-const MAX_STORED_PER_USER = 100;
+
 const DEFAULT_DAYS = 90;
 const MIN_DAYS = 2;
 
@@ -55,8 +57,10 @@ export const createBacktest = async (req: AuthRequest, res: Response) => {
             return res.status(429).json({ success: false, message: 'You already have 2 backtests in flight — wait for one to finish.' });
         }
         const stored = await Backtest.countByUser(req.user!.id);
-        if (stored >= MAX_STORED_PER_USER) {
-            return res.status(400).json({ success: false, message: `You have ${stored} stored backtests. Delete some before running more.` });
+        const user = await User.findById(req.user!.id);
+        const cap = limitsFor(user).maxStoredBacktests;
+        if (stored >= cap) {
+            return res.status(400).json({ success: false, message: `You have ${stored} stored backtests (plan limit ${cap}). Delete some before running more.` });
         }
 
         const row = await Backtest.create(req.user!.id, spec.name, spec, fromMs, toMs, linkedBotId);

@@ -1403,6 +1403,20 @@ function ToolsHubInner(initialActiveTool = null, onBack = null, onActiveToolChan
             })
           }),(0,L.jsx)(d.default,{
             style:o.gridItem,children:(0,L.jsxs)(O,{
+              onPress:()=>l.navigate('Library'),style:o.dashboardCard,children:[(0,L.jsx)(d.default,{
+                style:[o.iconCircle,{
+                  backgroundColor:r?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.03)',borderWidth:1,borderColor:r?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'
+                }],children:(0,L.jsx)(v.Trophy,{
+                  color:"#F5A623",size:26
+                })
+              }),(0,L.jsx)(c.default,{
+                numberOfLines:1,adjustsFontSizeToFit:true,style:o.cardTitle,children:"Strategy Library"
+              }),(0,L.jsx)(c.default,{
+                style:o.cardDesc,children:"Leaderboard"
+              })]
+            })
+          }),(0,L.jsx)(d.default,{
+            style:o.gridItem,children:(0,L.jsxs)(O,{
               onPress:()=>l.navigate('TradeDna'),style:o.dashboardCard,children:[(0,L.jsx)(d.default,{
                 style:[o.iconCircle,{
                   backgroundColor:r?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.03)',borderWidth:1,borderColor:r?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'

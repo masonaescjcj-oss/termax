@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { verifyToken, requireAdmin } from '../middleware/auth';
 import {
     getStats,
-    getUsers, updateUserRole,
+    getUsers, updateUserRole, updateUserPlan,
     addBroker, deleteBroker, listBrokers, editBroker,
     createCommunity, deleteCommunity, listCommunities, addCommunityModerator, editCommunity, assignCommunityAdmin,
     createPromotedSymbol, editPromotedSymbol, deletePromotedSymbol, listPromotedSymbols, togglePinSymbol,
@@ -26,6 +26,7 @@ router.get('/stats', getStats);
 // Users
 router.get('/users', getUsers);
 router.post('/users/role', updateUserRole);
+router.post('/users/plan', updateUserPlan);
 
 // Brokers
 router.get('/brokers', listBrokers);

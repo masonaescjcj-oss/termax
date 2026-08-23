@@ -19,7 +19,7 @@ import { Text, TextInput } from '../components/Typography';
 import axios from 'axios';
 import {
     Bot as BotIcon, ChevronLeft, Play, Square, Trash2, Plus, Sparkles,
-    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart,
+    FileText, ShieldCheck, ShieldAlert, TrendingUp, RefreshCw, Rocket, LineChart, Trophy,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -554,6 +554,21 @@ export default function BotsScreen({ navigation }) {
                                         </LinearGradient>
                                     </TouchableOpacity>
                                 )}
+                                {d.gate.eligible && (
+                                    <TouchableOpacity onPress={async () => {
+                                        try {
+                                            const r = await api('post', '/api/v1/library/publish', { botId: d.bot.id });
+                                            if (r.data?.success) showToast('Published to the Strategy Library 🏆', 'success');
+                                        } catch (e: any) {
+                                            showToast(e.response?.data?.message || 'Publish failed', 'error');
+                                        }
+                                    }}>
+                                        <View style={styles.publishBtn}>
+                                            <Trophy color={'#F5A623'} size={15} />
+                                            <Text style={[styles.actionBtnText, { color: '#F5A623' }]}>Publish to library</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                )}
                             </GlassView>
 
                             {Array.isArray(d.rules) && d.rules.length > 0 && (
@@ -634,6 +649,11 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     rulesBox: { marginTop: 8 },
     ruleLine: { fontSize: 13, color: colors.text, lineHeight: 22, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 },
 
+    publishBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+        paddingVertical: 11, borderRadius: 12, marginTop: 10,
+        backgroundColor: 'rgba(245,166,35,0.12)', borderWidth: 1, borderColor: 'rgba(245,166,35,0.35)',
+    },
     chartBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7,
         borderRadius: 18, backgroundColor: 'rgba(41,98,255,0.12)',

@@ -5,13 +5,15 @@
 
 import { Response } from 'express';
 import CustomIndicator from '../models/CustomIndicator';
+import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
+import { limitsFor, planOf } from '../services/plans';
 import { evalExprOverBars, parseExpr } from '../services/strategy/exprIndicator';
 import { readBarsTf } from '../services/candles/store';
 import { feedRouter } from '../services/feeds';
 import { Bar, TIMEFRAMES, Timeframe } from '../services/strategy/types';
 
-const MAX_PER_USER = 20;
+
 const MAX_VALUES = 500;
 
 async function loadBars(symbol: string, timeframe: Timeframe, limit: number): Promise<Bar[]> {
@@ -39,8 +41,14 @@ export const createIndicator = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: 'Invalid expression', errors: check.errors });
         }
         const existing = await CustomIndicator.listByUser(req.user!.id);
-        if (existing.length >= MAX_PER_USER) {
-            return res.status(400).json({ success: false, message: `You can keep at most ${MAX_PER_USER} custom indicators.` });
+        const user = await User.findById(req.user!.id);
+        const cap = limitsFor(user).maxCustomIndicators;
+        if (existing.length >= cap) {
+            return res.status(400).json({
+                success: false,
+                message: `Your ${planOf(user)} plan allows ${cap} custom indicators.`,
+                paywall: planOf(user) === 'FREE',
+            });
         }
         const row = await CustomIndicator.create(req.user!.id, {
             name: name.trim(),

@@ -110,6 +110,28 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/** Flip a user's plan — the admin door until a payment gateway lands. */
+export const updateUserPlan = async (req: AuthRequest, res: Response) => {
+    try {
+        const { userId, plan } = req.body;
+        if (!userId || !['FREE', 'PRO'].includes(plan)) {
+            return res.status(400).json({ success: false, message: 'userId and plan (FREE | PRO) required.' });
+        }
+        const { data: user, error } = await supabase
+            .from('users')
+            .update({ plan })
+            .eq('id', userId)
+            .select('id, username, email, plan')
+            .single();
+        if (error || !user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+        res.json({ success: true, message: `${user.username} is now on ${plan}.`, data: user });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
 export const updateUserRole = async (req: AuthRequest, res: Response) => {
     try {
         const { userId, role } = req.body;

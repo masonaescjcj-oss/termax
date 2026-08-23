@@ -7,6 +7,7 @@
  */
 
 import { supabase } from '../../config/supabase';
+import { aiDailyLimitFor } from '../plans';
 
 export interface QuotaState {
     allowed: boolean;
@@ -17,10 +18,7 @@ export interface QuotaState {
 }
 
 export function dailyLimitFor(user: any): number {
-    // Premium plans can be wired here later; today the limit is env-driven.
-    if (user?.role === 'admin') return 100_000;
-    const env = Number(process.env.AI_FREE_DAILY_MSGS);
-    return Number.isFinite(env) && env > 0 ? env : 30;
+    return aiDailyLimitFor(user);
 }
 
 export const todayKey = (now = new Date()): string => now.toISOString().slice(0, 10);

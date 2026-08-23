@@ -14,6 +14,7 @@ import botRoutes from './routes/botRoutes';
 import backtestRoutes from './routes/backtestRoutes';
 import insightRoutes from './routes/insightRoutes';
 import customIndicatorRoutes from './routes/customIndicatorRoutes';
+import libraryRoutes from './routes/libraryRoutes';
 
 const app: Application = express();
 
@@ -56,6 +57,7 @@ app.use('/api/v1/bots', botRoutes);
 app.use('/api/v1/backtests', backtestRoutes);
 app.use('/api/v1/insights', insightRoutes);
 app.use('/api/v1/indicators', customIndicatorRoutes);
+app.use('/api/v1/library', libraryRoutes);
 
 // Basic Error Handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

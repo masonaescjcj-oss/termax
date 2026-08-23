@@ -19,6 +19,7 @@ import NewsRadarScreen from '../screens/NewsRadarScreen';
 import EarnNftScreen from '../screens/EarnNftScreen';
 import BotsScreen from '../screens/BotsScreen';
 import TradeDnaScreen from '../screens/TradeDnaScreen';
+import LibraryScreen from '../screens/LibraryScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { isTelegram } from '../config';
 
@@ -382,6 +383,7 @@ export default function RootNavigator() {
                 <Stack.Screen name="EarnNft" component={EarnNftScreen} />
                 <Stack.Screen name="Bots" component={BotsScreen} />
                 <Stack.Screen name="TradeDna" component={TradeDnaScreen} />
+                <Stack.Screen name="Library" component={LibraryScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );
