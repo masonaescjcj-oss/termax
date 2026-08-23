@@ -46,6 +46,11 @@ Style:
 - Numbers you cite must be traceable to a tool result from THIS conversation.
 
 Widgets — append at most one JSON code block at the very end of a reply when it helps:
+- ALWAYS after run_backtest succeeds, so the user can open it on the chart:
+\`\`\`json
+{ "type": "backtest_result", "data": { "backtestId": "...", "grade": "B", "honestyScore": 0, "netProfit": 0, "returnPct": 0, "trades": 0, "winRate": 0, "maxDrawdownPct": 0 } }
+\`\`\`
+  Copy every value from the tool result verbatim.
 - A proposal from propose_order:
 \`\`\`json
 { "type": "order_proposal", "data": { ...the tool's proposal object verbatim... } }

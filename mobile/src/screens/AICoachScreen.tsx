@@ -297,6 +297,47 @@ export default function AICoachScreen() {
             );
         }
 
+        if (widget.type === 'backtest_result') {
+            const d = widget.data ?? {};
+            const gradeColors: any = { A: '#089981', B: '#26a69a', C: '#F5A623', D: '#F97316', F: '#F23645' };
+            const gcol = gradeColors[d.grade] ?? colors.textSecondary;
+            return (
+                <GlassView intensity={15} style={styles.widgetCard}>
+                    <View style={styles.widgetHeader}>
+                        <BarChart3 color={colors.primary} size={18} />
+                        <Text style={styles.widgetTitle}>Backtest</Text>
+                        <View style={styles.spacer} />
+                        <View style={{ backgroundColor: gcol, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 }}>
+                            <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 13 }}>{d.grade ?? '—'}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.widgetTargetRow}>
+                        <View>
+                            <Text style={styles.widgetLabel}>Net P/L</Text>
+                            <Text style={[styles.widgetValue, { color: (d.netProfit ?? 0) >= 0 ? colors.success : colors.danger }]}>
+                                {typeof d.netProfit === 'number' ? `$${d.netProfit.toFixed(2)}` : '—'}
+                            </Text>
+                        </View>
+                        <View>
+                            <Text style={styles.widgetLabel}>Trades</Text>
+                            <Text style={styles.widgetValue}>{d.trades ?? '—'}</Text>
+                        </View>
+                        <View>
+                            <Text style={styles.widgetLabel}>Max DD</Text>
+                            <Text style={[styles.widgetValue, { color: colors.danger }]}>{typeof d.maxDrawdownPct === 'number' ? `${d.maxDrawdownPct.toFixed(1)}%` : '—'}</Text>
+                        </View>
+                    </View>
+                    {d.backtestId && (
+                        <TouchableOpacity onPress={() => navigation.navigate('MainTabs', { screen: 'Chart', params: { backtestId: d.backtestId, ts: Date.now() } })}>
+                            <LinearGradient colors={['#2962FF', '#1E4FD6']} style={styles.executeSignalBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                                <Text style={styles.executeSignalBtnText}>View trades on chart</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    )}
+                </GlassView>
+            );
+        }
+
         if (widget.type === 'sentiment') {
             const bullishStyle = { flex: widget.data.bullishPercent, backgroundColor: colors.success };
             const bearishStyle = { flex: widget.data.bearishPercent, backgroundColor: colors.danger };

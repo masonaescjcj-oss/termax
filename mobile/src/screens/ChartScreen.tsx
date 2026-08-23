@@ -1222,6 +1222,34 @@ export default function ChartScreen({ navigation, route }: any) {
           // Cap what we draw: a 2,000-trade backtest as overlays would
           // wedge the WebView; the most recent 200 tell the story.
           sendMessageToChart(JSON.stringify({ type: 'botTrades', trades: trades.slice(-200) }));
+          // The spec's own indicators — the strategy's eyes on its chart.
+          for (const [nm, def] of Object.entries(row.spec?.indicators ?? {})) {
+            const mapped = mapSpecIndicator(def);
+            if (mapped) {
+              sendMessageToChart(JSON.stringify({ type: 'addIndicator', name: mapped.name, isMain: mapped.isMain, calcParams: mapped.calcParams }));
+            }
+          }
+          // Equity curve as its own pane, reusing the custom-series bridge.
+          // Points arrive at 1m resolution; the chart looks values up by the
+          // EXACT kline timestamp, so snap each point to the chart's current
+          // interval bucket (last value in the bucket wins).
+          const eq = row.result?.equityCurve ?? [];
+          if (eq.length > 5) {
+            const snapSec: any = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
+            const bucketMs = (snapSec[selectedInterval.toLowerCase()] ?? 3600) * 1000;
+            const byBucket: Record<number, number> = {};
+            for (const pnt of eq) {
+              byBucket[Math.floor(pnt.time / bucketMs) * bucketMs] = Number(pnt.equity.toFixed(2));
+            }
+            sendMessageToChart(JSON.stringify({
+              type: 'customIndicator',
+              id: 'equity_' + backtestId,
+              name: 'Equity',
+              pane: 'separate',
+              color: '#38BDF8',
+              points: Object.entries(byBucket).map(([t, v]) => ({ timestamp: Number(t), value: v })),
+            }));
+          }
         };
         if (!needsSymbolSwitch) {
           send();
