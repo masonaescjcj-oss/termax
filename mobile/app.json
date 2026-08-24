@@ -56,6 +56,14 @@
             "usesCleartextTraffic": true
           }
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "ترمکس برای ذخیره‌ی تصویر ژورنال در گالری شما اجازه می‌خواهد.",
+          "photosPermission": "ترمکس برای ذخیره‌ی تصویر ژورنال به گالری دسترسی می‌خواهد.",
+          "isAccessMediaLocationEnabled": false
+        }
       ]
     ],
     "owner": "itazoom4",

@@ -11,7 +11,7 @@
  * from the server. The screen lays them out; it never derives a figure,
  * so what is drawn here cannot disagree with the account.
  */
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
     View, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Modal,
     Platform, ActivityIndicator, RefreshControl, TextInput, KeyboardAvoidingView,
@@ -53,6 +53,14 @@ const EMOTIONS = [
     { key: 'greedy', fa: 'طمع‌کار' },
     { key: 'bored', fa: 'بی‌حوصله' },
 ];
+
+/**
+ * Half the card's pixel size, in points. The capture is taken at the
+ * device's own pixel ratio, so 540pt is 1080px at @2x and 1620px at @3x —
+ * at or above the card's real width on any modern phone.
+ */
+const CAPTURE_W = 540;
+const CAPTURE_H = 675;
 
 const toneColor = (tone: string, colors: any) =>
     tone === 'risk' ? colors.danger : tone === 'good' ? colors.success : colors.textSecondary;
@@ -115,6 +123,12 @@ export default function JournalScreen({ navigation }) {
     const [includeNote, setIncludeNote] = useState(false);
     const [cardTheme, setCardTheme] = useState<'dark' | 'light'>('dark');
     const [busy, setBusy] = useState(false);
+    // The node captured on native — an off-screen copy of the card, not
+    // the visible preview. captureRef resizes *from the view's on-screen
+    // bounds*, so capturing a ~370pt preview and scaling it up to 1080
+    // would ship a blurry card. The web path rasterises the SVG source
+    // directly and needs no view at all.
+    const captureRef_ = useRef<any>(null);
 
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -228,14 +242,62 @@ export default function JournalScreen({ navigation }) {
             img.src = url;
         });
 
+    /**
+     * Capture the preview to a PNG file and hand it to the OS.
+     *
+     * The three modules are required lazily and on purpose: they carry
+     * native code, so a binary built before they were added does not have
+     * them. A missing module then means falling back to the text share
+     * instead of crashing a button the user just tapped — which is also
+     * what happens between an over-the-air JS update and the next build.
+     */
+    const shareNative = async (download: boolean): Promise<boolean> => {
+        let captureRef: any, Sharing: any, MediaLibrary: any;
+        try {
+            captureRef = require('react-native-view-shot').captureRef;
+            Sharing = require('expo-sharing');
+            if (download) MediaLibrary = require('expo-media-library');
+        } catch {
+            return false;
+        }
+        if (!captureRef_.current) return false;
+
+        const uri = await captureRef(captureRef_, {
+            format: 'png', quality: 1, result: 'tmpfile',
+            // The off-screen host is half the card's size in points, so on
+            // any screen with a pixel ratio of 2 or more the raw capture is
+            // already at least 1080px wide and this only normalises it
+            // down — never up.
+            width: card.width, height: card.height,
+        });
+
+        if (download) {
+            const perm = await MediaLibrary.requestPermissionsAsync();
+            if (!perm?.granted) { toast('برای ذخیره در گالری اجازه لازم است', 'error'); return true; }
+            await MediaLibrary.saveToLibraryAsync(uri);
+            toast('تصویر در گالری ذخیره شد', 'success');
+            return true;
+        }
+
+        if (!(await Sharing.isAvailableAsync())) return false;
+        await Sharing.shareAsync(uri, {
+            mimeType: 'image/png',
+            dialogTitle: 'اشتراک‌گذاری کارت ژورنال',
+            UTI: 'public.png',
+        });
+        return true;
+    };
+
     const shareCard = async (download = false) => {
         if (!card) return;
         setBusy(true);
         try {
             if (Platform.OS !== 'web') {
-                // No canvas off the web: send the same sentence the image
-                // carries, rather than silently sharing nothing.
+                if (await shareNative(download)) return;
+                // No capture module in this binary: send the sentence the
+                // image would have carried, and say why it is not a picture.
                 await RNShare.share({ message: `${card.alt}\n\ntermax.app` });
+                toast('این نسخه‌ی اپ فقط متن را می‌فرستد؛ برای تصویر، اپ را به‌روز کنید', 'info');
                 return;
             }
             const blob = await toPngBlob(card.svg, card.width, card.height);
@@ -621,6 +683,16 @@ export default function JournalScreen({ navigation }) {
                                 )}
                             </View>
 
+                            {/* The capture host: laid out and rendered, but
+                                parked off-screen. collapsable={false} keeps
+                                Android from flattening it away, which would
+                                leave captureRef with nothing to capture. */}
+                            {!!card && Platform.OS !== 'web' && (
+                                <View ref={captureRef_} collapsable={false} style={styles.captureHost}>
+                                    <SvgXml xml={card.svg} width={CAPTURE_W} height={CAPTURE_H} />
+                                </View>
+                            )}
+
                             <View style={styles.optRow}>
                                 <Text style={styles.optLabel}>پنهان کردن مبالغ (فقط پیپ و درصد)</Text>
                                 <Switch
@@ -835,6 +907,10 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         backgroundColor: isDark ? '#0B0E13' : '#FFFFFF',
     },
     previewLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    captureHost: {
+        position: 'absolute', left: -10000, top: 0,
+        width: CAPTURE_W, height: CAPTURE_H,
+    },
     optRow: {
         flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
         paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
