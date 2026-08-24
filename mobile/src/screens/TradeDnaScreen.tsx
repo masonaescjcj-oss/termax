@@ -28,7 +28,7 @@ const api = async (path: string) => {
 
 const money = (v: any) => (typeof v === 'number' ? `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}` : '—');
 
-export default function TradeDnaScreen({ navigation }) {
+export default function TradeDnaScreen({ navigation, route }) {
     const { colors, isDark } = useTheme();
     const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
@@ -98,6 +98,13 @@ export default function TradeDnaScreen({ navigation }) {
             setView('dna');
         } finally { setAutopsyLoading(false); }
     };
+
+    // Arriving from the journal with a trade already chosen: open its
+    // autopsy directly instead of making the trader find the row again.
+    useEffect(() => {
+        const id = route?.params?.positionId;
+        if (id) openAutopsy({ id });
+    }, [route?.params?.positionId]);
 
     // The trader's own daily loss limit. Turning it ON is the point of the
     // feature; turning it OFF is instant, because a guard you cannot leave
