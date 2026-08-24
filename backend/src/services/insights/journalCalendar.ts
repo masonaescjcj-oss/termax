@@ -255,6 +255,42 @@ export function sliceByTag(rows: JournalRow[], minTrades = 3): TagSlice[] {
         .sort((a, b) => a.netProfit - b.netProfit);
 }
 
+/**
+ * What each mood costs.
+ *
+ * The mood is the one thing on a trade the engine cannot measure — the
+ * trader chose it from a closed list, which is precisely why the list is
+ * closed: a paragraph cannot be sliced, six labels can. Same floor as the
+ * habit table, because a mood seen twice is a mood, not a pattern.
+ */
+export function sliceByEmotion(
+    rows: Array<{ emotion: string | null; netProfit: number }>,
+    labels: Record<string, string>,
+    minTrades = 3
+): Array<{ key: string; fa: string; trades: number; wins: number; winRate: number; netProfit: number; expectancy: number }> {
+    const map = new Map<string, { trades: number; wins: number; net: number }>();
+    for (const r of rows) {
+        if (!r.emotion) continue;
+        const cur = map.get(r.emotion) ?? { trades: 0, wins: 0, net: 0 };
+        cur.trades++;
+        if (r.netProfit > 0) cur.wins++;
+        cur.net += r.netProfit;
+        map.set(r.emotion, cur);
+    }
+    return [...map.entries()]
+        .filter(([, v]) => v.trades >= minTrades)
+        .map(([key, v]) => ({
+            key,
+            fa: labels[key] ?? key,
+            trades: v.trades,
+            wins: v.wins,
+            winRate: Number(((v.wins / v.trades) * 100).toFixed(1)),
+            netProfit: round2(v.net),
+            expectancy: round2(v.net / v.trades),
+        }))
+        .sort((a, b) => a.netProfit - b.netProfit);
+}
+
 /** '2026-08-24' → '۲ شهریور ۱۴۰۵ (دوشنبه)' */
 export function dayLabelFa(isoDay: string): string {
     const wd = ['شنبه', 'یک‌شنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'][jalaliWeekday(isoDay)];

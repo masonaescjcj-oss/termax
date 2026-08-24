@@ -17,6 +17,7 @@ import { computeTradeDna, DnaProfile, DnaTrade } from '../services/insights/trad
 import { classifyContext, sliceByContext } from '../services/insights/journal';
 import { runAutopsy } from '../services/insights/autopsy';
 import { buildWeeklyDigest } from '../services/insights/digest';
+import { buildPortfolioReport } from '../services/insights/portfolio';
 import Bot from '../models/Bot';
 import BotEvent from '../models/BotEvent';
 import { computeTradeStats } from '../services/bots/tradeStats';
@@ -269,6 +270,46 @@ export const getWeeklyDigest = async (req: AuthRequest, res: Response) => {
             rolled, manualWeek, bots, findings: profile.findings, events: weekEvents.length, now,
         });
         res.status(200).json({ success: true, data: digest });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * PORTFOLIO — what the open book adds up to.
+ *
+ * Read-only and computed on request: it describes positions that are
+ * already open, so there is nothing to cache and nothing to schedule.
+ */
+export const getPortfolio = async (req: AuthRequest, res: Response) => {
+    try {
+        const rows = (await Position.find({ userId: req.user!.id, status: 'OPEN' }) as any[]);
+        const positions = rows.map(p => ({
+            id: String(p.id),
+            symbol: p.symbol,
+            side: p.side as 'BUY' | 'SELL',
+            volume: Number(p.volume) || 0,
+            entryPrice: Number(p.entryPrice) || 0,
+            stopLoss: p.stopLoss == null ? null : Number(p.stopLoss),
+        }));
+
+        // Equity turns the all-stops-hit total into a percentage. Without
+        // it the report simply omits the percentage rather than guessing.
+        let equity: number | null = null;
+        try {
+            // accountMetrics takes the account *balance*, not the user —
+            // the same call the risk-guard endpoint above makes.
+            const user = await User.findById(req.user!.id);
+            const account = user?.cTraderAccounts?.find((a: any) => a.accountType === 'DEMO')
+                ?? user?.cTraderAccounts?.[0];
+            const value = accountMetrics(account?.balance ?? 0, rows as any).equity;
+            equity = Number.isFinite(value) ? Number(value) : null;
+        } catch { /* the money figures stand without it; the percentage is dropped */ }
+
+        res.status(200).json({
+            success: true,
+            data: buildPortfolioReport(positions, { equity }),
+        });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

@@ -24,6 +24,7 @@ import ReplayScreen from '../screens/ReplayScreen';
 import AiStudioScreen from '../screens/AiStudioScreen';
 import UpgradeScreen from '../screens/UpgradeScreen';
 import JournalScreen from '../screens/JournalScreen';
+import PortfolioScreen from '../screens/PortfolioScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { isTelegram } from '../config';
 
@@ -392,6 +393,7 @@ export default function RootNavigator() {
                 <Stack.Screen name="AiStudio" component={AiStudioScreen} />
                 <Stack.Screen name="Upgrade" component={UpgradeScreen} />
                 <Stack.Screen name="Journal" component={JournalScreen} />
+                <Stack.Screen name="Portfolio" component={PortfolioScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

@@ -13,7 +13,7 @@
 
 import { Response } from 'express';
 import Position from '../models/Position';
-import TradeNote, { EMOTIONS, Emotion } from '../models/TradeNote';
+import TradeNote, { EMOTIONS, EMOTION_FA, Emotion } from '../models/TradeNote';
 import { AuthRequest } from '../middleware/auth';
 import { classifyContext, JournalTags } from '../services/insights/journal';
 import {
@@ -21,7 +21,7 @@ import {
     breaksDiscipline, TAG_META, JournalTradeInput,
 } from '../services/insights/journalEntry';
 import {
-    buildMonth, computeStreak, sliceByTag, localDayKey, JournalRow,
+    buildMonth, computeStreak, sliceByTag, sliceByEmotion, localDayKey, JournalRow,
     dayLabelFa, jalaliMonthOf,
 } from '../services/insights/journalCalendar';
 import { runAutopsy } from '../services/insights/autopsy';
@@ -147,12 +147,27 @@ export const getJournalMonth = async (req: AuthRequest, res: Response) => {
         const cutoff = Date.now() - 90 * 86_400_000;
         const recent = rows.filter(r => r.closeTime >= cutoff);
 
+        // The mood the trader tagged, sliced like any other habit. Until
+        // now the field was written and never read back, which made the
+        // whole mood picker decoration.
+        let moods: any = { trades: 0, slices: [] };
+        try {
+            const notes = await TradeNote.listByPositions(req.user!.id, recent.map(r => r.id));
+            const tagged = recent
+                .map(r => ({ emotion: notes.get(r.id)?.emotion ?? null, netProfit: r.netProfit }))
+                .filter(r => !!r.emotion);
+            moods = { trades: tagged.length, slices: sliceByEmotion(tagged, EMOTION_FA) };
+        } catch (e: any) {
+            console.warn('[Journal] mood slicing failed:', e.message);
+        }
+
         res.status(200).json({
             success: true,
             data: {
                 ...view,
                 today,
                 source,
+                moods,
                 streak: {
                     ...streak,
                     // What ended the run *before* the current one — so the

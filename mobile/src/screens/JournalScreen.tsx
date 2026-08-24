@@ -22,7 +22,7 @@ import axios from 'axios';
 import Svg, { Polyline, Circle, Line as SvgLine, SvgXml } from 'react-native-svg';
 import {
     ChevronLeft, ChevronRight, CalendarDays, Flame, BookOpen, Tag, X, Check, Info,
-    NotebookPen, TrendingUp, TrendingDown, Share2, Download,
+    NotebookPen, TrendingUp, TrendingDown, Share2, Download, Smile,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { useTheme } from '../theme/ThemeContext';
@@ -145,9 +145,16 @@ export default function JournalScreen({ navigation }) {
             const q = new URLSearchParams({ calendar, tz: String(tz) });
             if (target) { q.set('year', String(target.year)); q.set('month', String(target.month)); }
             const res = await api(`/api/v1/journal/month?${q.toString()}`);
-            if (res.data?.success) {
-                setMonth(res.data.data);
-                setYm({ year: res.data.data.year, month: res.data.data.month });
+            const data = res.data?.data;
+            // Check the shape, not just the success flag: the screen reads
+            // month.totals.* and month.days[] directly, so a malformed
+            // payload would white-screen behind the error boundary rather
+            // than showing the "not available" state.
+            if (res.data?.success && data && Array.isArray(data.days) && data.totals) {
+                setMonth(data);
+                setYm({ year: data.year, month: data.month });
+            } else {
+                setMonth(null);
             }
         } catch (e: any) {
             toast(e?.response?.data?.message || 'ژورنال بارگیری نشد', 'error');
@@ -486,6 +493,34 @@ export default function JournalScreen({ navigation }) {
                             <Text style={styles.noteText}>در این ماه معامله‌ی بسته‌شده‌ای نبود.</Text>
                         )}
                     </GlassView>
+
+                    {/* what each mood cost — the trader's own labels */}
+                    {month.moods?.slices?.length > 0 && (
+                        <GlassView intensity={14} style={styles.card}>
+                            <View style={styles.cardHeader}>
+                                <Smile color={colors.primary} size={18} />
+                                <Text style={styles.cardTitle}>حال شما و نتیجه‌اش</Text>
+                            </View>
+                            <Text style={styles.noteText}>
+                                از {month.moods.trades} معامله‌ای که خودتان حالتان را روی آن ثبت کرده‌اید. این تنها
+                                چیزی در ژورنال است که موتور نمی‌تواند اندازه بگیرد — و دقیقاً به همین دلیل فهرستش
+                                بسته است، چون فهرست را می‌شود برش زد. حال‌های زیر ۳ معامله نمایش داده نمی‌شوند.
+                            </Text>
+                            {month.moods.slices.map((m: any) => (
+                                <View key={m.key} style={styles.habitRow}>
+                                    <View style={[styles.tagChip, { borderColor: m.netProfit >= 0 ? colors.success : colors.danger }]}>
+                                        <Text style={[styles.tagChipText, { color: m.netProfit >= 0 ? colors.success : colors.danger }]}>
+                                            {m.fa}
+                                        </Text>
+                                    </View>
+                                    <Text style={styles.habitMeta}>{m.trades} معامله · {m.winRate}%</Text>
+                                    <Text style={[styles.habitNet, { color: m.netProfit >= 0 ? colors.success : colors.danger }]}>
+                                        {money(m.netProfit)}
+                                    </Text>
+                                </View>
+                            ))}
+                        </GlassView>
+                    )}
 
                     {/* habit bill */}
                     {month.habits?.slices?.length > 0 && (

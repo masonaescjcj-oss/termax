@@ -20,7 +20,8 @@ import {
     autoTags, breaksDiscipline, renderEntry, renderDayRecap, resultPips, stopPipsOf, TAG_META,
 } from './journalEntry';
 import {
-    buildMonth, computeStreak, localDayKey, monthDayKeys, sliceByTag, JournalRow, dayLabelFa,
+    buildMonth, computeStreak, localDayKey, monthDayKeys, sliceByTag, sliceByEmotion,
+    JournalRow, dayLabelFa,
 } from './journalCalendar';
 
 let passed = 0;
@@ -341,6 +342,47 @@ check('tone comes from the tag table', byKey.get('revenge')!.tone, 'risk');
 check('and the label is Persian', byKey.get('revenge')!.fa, 'انتقامی');
 check('every discipline tag has metadata',
     ['revenge', 'oversize', 'noStop'].every(k => !!TAG_META[k]), true);
+
+// ── the mood table ──────────────────────────────────────────────────
+section('what each mood costs');
+
+const LABELS = {
+    confident: 'با اعتماد', disciplined: 'منظم', anxious: 'مضطرب',
+    fearful: 'ترسیده', greedy: 'طمع‌کار', bored: 'بی‌حوصله',
+};
+const moodRows = [
+    { emotion: 'greedy', netProfit: -80 },
+    { emotion: 'greedy', netProfit: -60 },
+    { emotion: 'greedy', netProfit: 20 },
+    { emotion: 'disciplined', netProfit: 40 },
+    { emotion: 'disciplined', netProfit: 35 },
+    { emotion: 'disciplined', netProfit: -10 },
+    { emotion: 'disciplined', netProfit: 25 },
+    { emotion: 'anxious', netProfit: -50 },
+    { emotion: 'anxious', netProfit: -30 },
+    { emotion: null, netProfit: 500 },
+];
+const moods = sliceByEmotion(moodRows, LABELS);
+const mood = (k: string) => moods.find(m => m.key === k);
+
+// greedy: -80 -60 +20 = -120 over 3, 1 winner.
+check('greedy trades counted', mood('greedy')!.trades, 3);
+check('greedy bill', mood('greedy')!.netProfit, -120);
+check('greedy win rate', mood('greedy')!.winRate, 33.3);
+check('greedy expectancy', mood('greedy')!.expectancy, -40);
+// disciplined: 40 + 35 - 10 + 25 = 90 over 4, 3 winners.
+check('disciplined net', mood('disciplined')!.netProfit, 90);
+check('disciplined win rate', mood('disciplined')!.winRate, 75);
+// anxious has only 2 trades — under the floor.
+check('a mood seen twice is not a pattern', !!mood('anxious'), false);
+check('untagged trades are not a mood', !!mood('null'), false);
+truthy('and the big untagged winner does not inflate any row',
+    moods.every(m => m.netProfit !== 500));
+check('the most expensive mood is first', moods[0].key, 'greedy');
+check('labels are Persian', mood('greedy')!.fa, 'طمع‌کار');
+check('no notes, no moods', sliceByEmotion([], LABELS).length, 0);
+check('all untagged, no moods',
+    sliceByEmotion([{ emotion: null, netProfit: 10 }], LABELS).length, 0);
 
 // ── report ──────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(64)}`);
