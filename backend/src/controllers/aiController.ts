@@ -204,6 +204,20 @@ export const chatWithMaxAI = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/** The plan matrix, so the paywall screen shows the real limits. */
+export const getPlans = async (req: AuthRequest, res: Response) => {
+    try {
+        const user = await User.findById(req.user!.id);
+        const { PLAN_LIMITS, planOf } = await import('../services/plans');
+        res.status(200).json({
+            success: true,
+            data: { current: planOf(user), plans: PLAN_LIMITS },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
 /** Today's quota state, for the client's counter/paywall. */
 export const getAIUsage = async (req: AuthRequest, res: Response) => {
     try {

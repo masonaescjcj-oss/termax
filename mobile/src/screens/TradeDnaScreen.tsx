@@ -13,7 +13,7 @@ import {
 import { Text } from '../components/Typography';
 import axios from 'axios';
 import {
-    ChevronLeft, Dna, AlertTriangle, Info, Flame, Microscope, Clock, ShieldCheck, ShieldOff, Lock,
+    ChevronLeft, Dna, AlertTriangle, Info, Flame, Microscope, Clock, ShieldCheck, ShieldOff, Lock, CalendarDays, Layers3,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { useTheme } from '../theme/ThemeContext';
@@ -40,6 +40,7 @@ export default function TradeDnaScreen({ navigation }) {
     const [autopsy, setAutopsy] = useState<any>(null);
     const [autopsyLoading, setAutopsyLoading] = useState(false);
     const [guard, setGuard] = useState<any>(null);
+    const [digest, setDigest] = useState<any>(null);
     const [savingGuard, setSavingGuard] = useState(false);
 
     const [toastVisible, setToastVisible] = useState(false);
@@ -50,11 +51,13 @@ export default function TradeDnaScreen({ navigation }) {
     const load = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const [dnaRes, posRes, guardRes] = await Promise.all([
+            const [dnaRes, posRes, guardRes, digestRes] = await Promise.all([
                 api('/api/v1/insights/dna'),
                 api('/api/v1/trade/positions?status=CLOSED').catch(() => ({ data: { data: [] } })),
                 api('/api/v1/insights/risk-guard').catch(() => ({ data: { data: null } })),
+                api('/api/v1/insights/digest').catch(() => ({ data: { data: null } })),
             ]);
+            if (digestRes.data?.data) setDigest(digestRes.data.data);
             if (dnaRes.data?.success) setProfile(dnaRes.data.data);
             if (guardRes.data?.data) setGuard(guardRes.data.data);
             const rows = posRes.data?.data ?? posRes.data ?? [];
@@ -173,6 +176,45 @@ export default function TradeDnaScreen({ navigation }) {
                             </GlassView>
                         )}
 
+                        {digest && (
+                            <GlassView intensity={14} style={styles.card}>
+                                <View style={styles.cardHeader}>
+                                    <CalendarDays color={colors.primary} size={18} />
+                                    <Text style={styles.cardTitle}>گزارش این هفته</Text>
+                                </View>
+                                <Text style={styles.findingText}>{digest.headlineFa}</Text>
+                                <View style={styles.factsRow}>
+                                    <View style={styles.factCell}>
+                                        <Text style={styles.factLabel}>دستی</Text>
+                                        <Text style={[styles.factValue, { color: digest.manual.netProfit >= 0 ? colors.success : colors.danger }]}>{money(digest.manual.netProfit)}</Text>
+                                    </View>
+                                    <View style={styles.factCell}>
+                                        <Text style={styles.factLabel}>ربات‌ها</Text>
+                                        <Text style={[styles.factValue, { color: digest.botsNet >= 0 ? colors.success : colors.danger }]}>{money(digest.botsNet)}</Text>
+                                    </View>
+                                    <View style={styles.factCell}>
+                                        <Text style={styles.factLabel}>وین‌ریت دستی</Text>
+                                        <Text style={styles.factValue}>{digest.manual.winRate}%</Text>
+                                    </View>
+                                </View>
+                                {digest.manual.bestDay && (
+                                    <Text style={styles.noteText}>بهترین روز: {digest.manual.bestDay.day} ({money(digest.manual.bestDay.netProfit)})
+                                        {digest.manual.worstDay ? ` · بدترین روز: ${digest.manual.worstDay.day} (${money(digest.manual.worstDay.netProfit)})` : ''}</Text>
+                                )}
+                                {digest.bots.length > 0 && digest.bots.map((b: any, i: number) => (
+                                    <Text key={i} style={styles.noteText}>
+                                        {b.paused ? '⛔ ' : '• '}{b.name}: {b.trades} معامله، {money(b.netProfit)}{b.paused ? ' (نگهبان متوقفش کرد)' : ''}
+                                    </Text>
+                                ))}
+                                {digest.focus && (
+                                    <View style={styles.focusBox}>
+                                        <Flame color={'#F5A623'} size={15} />
+                                        <Text style={[styles.findingText, { color: '#F5A623' }]}>یک کار برای این هفته: {digest.focus.fa}</Text>
+                                    </View>
+                                )}
+                            </GlassView>
+                        )}
+
                         {guard && (
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={[styles.cardHeader, { justifyContent: 'space-between' }]}>
@@ -233,6 +275,32 @@ export default function TradeDnaScreen({ navigation }) {
                                     <View key={i} style={styles.findingRow}>
                                         <SevIcon severity={f.severity} />
                                         <Text style={styles.findingText}>{f.fa}</Text>
+                                    </View>
+                                ))}
+                            </GlassView>
+                        )}
+
+                        {profile.context?.slices && (profile.context.slices.trend.length > 0 || profile.context.slices.volatility.length > 0) && (
+                            <GlassView intensity={14} style={styles.card}>
+                                <View style={styles.cardHeader}>
+                                    <Layers3 color={colors.primary} size={18} />
+                                    <Text style={styles.cardTitle}>عملکرد بر حسب حالت بازار</Text>
+                                </View>
+                                <Text style={styles.noteText}>هر معامله با رژیم بازارِ لحظه‌ی ورودش برچسب خورده ({profile.context.tagged} معامله). گروه‌های کمتر از ۴ معامله نمایش داده نمی‌شوند.</Text>
+                                {[
+                                    { title: 'روند', rows: profile.context.slices.trend },
+                                    { title: 'نوسان', rows: profile.context.slices.volatility },
+                                    { title: 'جهت', rows: profile.context.slices.withTrend },
+                                ].filter(g => g.rows.length > 0).map((g, gi) => (
+                                    <View key={gi} style={{ marginTop: 10 }}>
+                                        <Text style={[styles.factLabel, { marginBottom: 4 }]}>{g.title}</Text>
+                                        {g.rows.map((r: any) => (
+                                            <View key={r.key} style={styles.sliceRow}>
+                                                <Text style={styles.sliceLabel}>{r.labelFa}</Text>
+                                                <Text style={styles.sliceMeta}>{r.trades} معامله · {r.winRate}%</Text>
+                                                <Text style={[styles.sliceNet, { color: r.netProfit >= 0 ? colors.success : colors.danger }]}>{money(r.netProfit)}</Text>
+                                            </View>
+                                        ))}
                                     </View>
                                 ))}
                             </GlassView>
@@ -351,6 +419,17 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     tradeSymbol: { fontSize: 13.5, fontWeight: '600', color: colors.text },
     tradeMeta: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
     tradePnl: { fontSize: 14.5, fontWeight: '700' },
+    focusBox: {
+        flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: 10,
+        borderRadius: 10, backgroundColor: 'rgba(245,166,35,0.10)', borderWidth: 1, borderColor: 'rgba(245,166,35,0.35)',
+    },
+    sliceRow: {
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 7,
+        borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+    },
+    sliceLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'right', writingDirection: 'rtl' },
+    sliceMeta: { fontSize: 11, color: colors.textSecondary, marginHorizontal: 8 },
+    sliceNet: { fontSize: 12.5, fontWeight: '700' },
     lockedBox: {
         flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: 10,
         borderRadius: 10, backgroundColor: 'rgba(242,54,69,0.10)', borderWidth: 1, borderColor: 'rgba(242,54,69,0.35)',

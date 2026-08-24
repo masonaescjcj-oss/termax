@@ -14,7 +14,13 @@ import { AuthRequest } from '../middleware/auth';
 import { accountMetrics, getSpreadPips } from '../services/pricing';
 import { evaluateRiskGuard, riskGuardConfig } from '../services/riskGuard';
 import { computeTradeDna, DnaProfile, DnaTrade } from '../services/insights/tradeDna';
+import { classifyContext, sliceByContext } from '../services/insights/journal';
 import { runAutopsy } from '../services/insights/autopsy';
+import { buildWeeklyDigest } from '../services/insights/digest';
+import Bot from '../models/Bot';
+import BotEvent from '../models/BotEvent';
+import { computeTradeStats } from '../services/bots/tradeStats';
+import { getTradeStats } from '../services/ai/statsRollup';
 
 const DNA_TTL_MS = 10 * 60_000;
 const dnaCache = new Map<string, { profile: DnaProfile; at: number }>();
@@ -45,7 +51,31 @@ async function dnaFor(userId: string): Promise<DnaProfile> {
 export const getTradeDna = async (req: AuthRequest, res: Response) => {
     try {
         const profile = await dnaFor(req.user!.id);
-        res.status(200).json({ success: true, data: profile });
+
+        // Auto journal: tag each trade with the regime it happened in and
+        // slice the record by it. Capped at the 200 most recent trades —
+        // each tag reads candles, and the tail adds nothing a trader can
+        // act on today.
+        let context: any = null;
+        try {
+            const trades = (await loadManualClosedTrades(req.user!.id))
+                .sort((a, b) => b.closeTime - a.closeTime)
+                .slice(0, 200);
+            const tagged = trades.map(t => ({
+                tags: classifyContext({ symbol: t.symbol, side: t.side, openTime: t.openTime, closeTime: t.closeTime }),
+                netProfit: t.netProfit,
+            }));
+            const usable = tagged.filter(t => t.tags.evidence.bars >= 60);
+            context = {
+                tagged: usable.length,
+                skipped: tagged.length - usable.length,
+                slices: sliceByContext(usable),
+            };
+        } catch (e: any) {
+            console.warn('[Journal] context slicing failed:', e.message);
+        }
+
+        res.status(200).json({ success: true, data: { ...profile, context } });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -73,6 +103,15 @@ export const getTradeAutopsy = async (req: AuthRequest, res: Response) => {
         });
         if (!report.ok) return res.status(422).json({ success: false, message: report.reason });
 
+        let context: any = null;
+        try {
+            context = classifyContext({
+                symbol: p.symbol, side: p.side,
+                openTime: new Date(p.openTime).getTime(),
+                closeTime: new Date(p.closeTime).getTime(),
+            });
+        } catch { /* the autopsy stands without it */ }
+
         res.status(200).json({
             success: true,
             data: {
@@ -81,6 +120,7 @@ export const getTradeAutopsy = async (req: AuthRequest, res: Response) => {
                     entryPrice: p.entryPrice, closePrice: p.closePrice,
                     openTime: p.openTime, closeTime: p.closeTime, netProfit: p.finalProfit ?? 0,
                 },
+                context,
                 ...report,
             },
         });
@@ -186,6 +226,49 @@ export const updateRiskGuard = async (req: AuthRequest, res: Response) => {
         user.markModified?.('riskGuard');
         await user.save();
         res.status(200).json({ success: true, data: { config: next } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/**
+ * WEEKLY DIGEST — assembled from counted data, no AI call, so every user
+ * can have one every week at zero marginal cost.
+ */
+export const getWeeklyDigest = async (req: AuthRequest, res: Response) => {
+    try {
+        const now = Date.now();
+        const weekAgo = now - 7 * 86_400_000;
+
+        const all = (await Position.find({ userId: req.user!.id, status: 'CLOSED' }) as any[]);
+        const inWeek = all.filter(p => p.closeTime && new Date(p.closeTime).getTime() >= weekAgo);
+
+        const manualWeek = computeTradeStats(inWeek.filter(p => !p.botId));
+        const botRows = await Bot.listByUser(req.user!.id).catch(() => []);
+        const events = await BotEvent.listByUser(req.user!.id, 40).catch(() => []);
+        const weekEvents = events.filter(e => e.createdAt.getTime() >= weekAgo);
+
+        const bots = botRows.map(b => {
+            const mine = inWeek.filter(p => p.botId === b.id);
+            return {
+                name: b.name,
+                status: b.status,
+                trades: mine.length,
+                netProfit: Number(mine.reduce((s, p) => s + Number(p.finalProfit ?? 0), 0).toFixed(2)),
+                paused: weekEvents.some(e => e.botId === b.id && e.kind.startsWith('watchdog:') && e.severity === 'ALERT'),
+            };
+        }).filter(b => b.trades > 0 || b.paused || b.status !== 'STOPPED');
+
+        const rolled = await getTradeStats(req.user!.id, 8).catch(() => ({
+            days: 8, trades: 0, wins: 0, losses: 0, winRate: 0, netProfit: 0,
+            grossProfit: 0, grossLoss: 0, profitFactor: 0, expectancy: 0, daily: [],
+        }));
+        const profile = await dnaFor(req.user!.id);
+
+        const digest = buildWeeklyDigest({
+            rolled, manualWeek, bots, findings: profile.findings, events: weekEvents.length, now,
+        });
+        res.status(200).json({ success: true, data: digest });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

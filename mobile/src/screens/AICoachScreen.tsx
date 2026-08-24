@@ -69,6 +69,7 @@ export default function AICoachScreen() {
     const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
     const [selectedModel, setSelectedModel] = useState('MaxAI');
     const flatListRef = useRef<any>(null);
+    const [paywallHit, setPaywallHit] = useState(false);
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('info');
@@ -161,7 +162,8 @@ export default function AICoachScreen() {
                     detailedError = 'Session expired or invalid. Please log out and log in again from the Profile tab.';
                 } else if (error.response.status === 429 && error.response.data?.paywall) {
                     const u = error.response.data.usage;
-                    detailedError = `You have used all ${u?.limit ?? ''} free AI messages for today. Your quota resets at midnight UTC.`;
+                    detailedError = `سهمیه‌ی امروز شما (${u?.limit ?? ''} پیام) تمام شد. نیمه‌شب UTC تازه می‌شود — یا با پلن PRO سقف بالاتری بگیرید.`;
+                    setPaywallHit(true);
                 } else {
                     detailedError = `Server Error (${error.response.status}): ${error.response.data?.error || error.response.data?.message || 'Internal Server Error'}`;
                 }
@@ -202,6 +204,17 @@ export default function AICoachScreen() {
             showToast(`Error: ${e.response?.data?.message || e.message}`, 'error');
         }
     };
+
+    const PaywallBanner = () => paywallHit ? (
+        <TouchableOpacity
+            onPress={() => { setPaywallHit(false); navigation.navigate('Upgrade'); }}
+            style={{ marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(245,166,35,0.14)', borderWidth: 1, borderColor: 'rgba(245,166,35,0.45)' }}
+        >
+            <Text style={{ color: '#F5A623', fontSize: 12.5, fontWeight: '700', textAlign: 'center' }}>
+                سهمیه‌ی امروز تمام شد — دیدن پلن‌ها و سقف‌ها ↗
+            </Text>
+        </TouchableOpacity>
+    ) : null;
 
     const renderWidget = (widget: any) => {
         if (!widget) return null;
@@ -807,6 +820,8 @@ export default function AICoachScreen() {
                         ) : null}
                     />
                 )}
+
+                <PaywallBanner />
 
                 <View style={[styles.floatingInputWrapper, { borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: colors.glassCardBorder }]}>
                     <LinearGradient
