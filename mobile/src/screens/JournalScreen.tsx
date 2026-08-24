@@ -15,13 +15,14 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     View, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Modal,
     Platform, ActivityIndicator, RefreshControl, TextInput, KeyboardAvoidingView,
+    Switch, Share as RNShare,
 } from 'react-native';
 import { Text } from '../components/Typography';
 import axios from 'axios';
-import Svg, { Polyline, Circle, Line as SvgLine } from 'react-native-svg';
+import Svg, { Polyline, Circle, Line as SvgLine, SvgXml } from 'react-native-svg';
 import {
     ChevronLeft, ChevronRight, CalendarDays, Flame, BookOpen, Tag, X, Check, Info,
-    NotebookPen, TrendingUp, TrendingDown,
+    NotebookPen, TrendingUp, TrendingDown, Share2, Download,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { useTheme } from '../theme/ThemeContext';
@@ -106,6 +107,15 @@ export default function JournalScreen({ navigation }) {
     const [draftEmotion, setDraftEmotion] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
+    // Share card. `cardReq` is what to build; the toggles are how.
+    const [cardReq, setCardReq] = useState<any>(null);
+    const [card, setCard] = useState<any>(null);
+    const [cardLoading, setCardLoading] = useState(false);
+    const [hideMoney, setHideMoney] = useState(false);
+    const [includeNote, setIncludeNote] = useState(false);
+    const [cardTheme, setCardTheme] = useState<'dark' | 'light'>('dark');
+    const [busy, setBusy] = useState(false);
+
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('info');
@@ -171,6 +181,87 @@ export default function JournalScreen({ navigation }) {
         }
     };
 
+    // The card is built server-side from the same numbers the screen
+    // shows, then rasterised here. Re-fetched whenever a switch moves,
+    // because redaction happens where the card is composed — the client
+    // never gets a figure it was asked to hide.
+    useEffect(() => {
+        if (!cardReq) { setCard(null); return; }
+        let alive = true;
+        (async () => {
+            setCardLoading(true);
+            try {
+                const q = new URLSearchParams({
+                    ...cardReq,
+                    tz: String(tz),
+                    theme: cardTheme,
+                    hideMoney: hideMoney ? '1' : '0',
+                    includeNote: includeNote ? '1' : '0',
+                });
+                const res = await api(`/api/v1/journal/card?${q.toString()}`);
+                if (alive && res.data?.success) setCard(res.data.data);
+            } catch (e: any) {
+                if (alive) toast(e?.response?.data?.message || 'کارت ساخته نشد', 'error');
+            } finally {
+                if (alive) setCardLoading(false);
+            }
+        })();
+        return () => { alive = false; };
+    }, [cardReq, hideMoney, includeNote, cardTheme, tz]);
+
+    /** SVG → PNG. Web only: there is no canvas on native. */
+    const toPngBlob = (svg: string, width: number, height: number): Promise<Blob> =>
+        new Promise((resolve, reject) => {
+            const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+            const img = new window.Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) { URL.revokeObjectURL(url); return reject(new Error('no 2d context')); }
+                ctx.drawImage(img, 0, 0, width, height);
+                URL.revokeObjectURL(url);
+                canvas.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png');
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('svg did not load')); };
+            img.src = url;
+        });
+
+    const shareCard = async (download = false) => {
+        if (!card) return;
+        setBusy(true);
+        try {
+            if (Platform.OS !== 'web') {
+                // No canvas off the web: send the same sentence the image
+                // carries, rather than silently sharing nothing.
+                await RNShare.share({ message: `${card.alt}\n\ntermax.app` });
+                return;
+            }
+            const blob = await toPngBlob(card.svg, card.width, card.height);
+            const file = new File([blob], card.filename, { type: 'image/png' });
+
+            if (!download && (navigator as any).canShare?.({ files: [file] })) {
+                await (navigator as any).share({ files: [file], text: `${card.alt}\n\ntermax.app` });
+                return;
+            }
+            const href = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = href;
+            a.download = card.filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(href), 4000);
+            toast('تصویر ذخیره شد', 'success');
+        } catch (e: any) {
+            // A cancelled share sheet rejects too; that is not an error.
+            if (e?.name !== 'AbortError') toast(e?.message || 'اشتراک‌گذاری انجام نشد', 'error');
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const cellStyle = (d: any) => {
         if (!d.trades) return { backgroundColor: 'transparent', borderColor: colors.border };
         const a = 0.16 + Math.min(1, Math.abs(d.intensity)) * 0.5;
@@ -198,6 +289,17 @@ export default function JournalScreen({ navigation }) {
                 >
                     <CalendarDays color={colors.primary} size={14} />
                     <Text style={styles.calToggleText}>{calendar === 'jalali' ? 'شمسی' : 'میلادی'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    disabled={!month}
+                    onPress={() => setCardReq({
+                        kind: 'month', calendar,
+                        year: String(month.year), month: String(month.month),
+                        source: month.source ?? 'manual',
+                    })}
+                    style={styles.iconBtn}
+                >
+                    <Share2 color={month ? colors.primary : colors.textSecondary} size={19} />
                 </TouchableOpacity>
             </View>
 
@@ -358,7 +460,13 @@ export default function JournalScreen({ navigation }) {
                                 <X color={colors.text} size={20} />
                             </TouchableOpacity>
                             <Text style={styles.sheetTitle}>{day?.labelFa ?? '...'}</Text>
-                            <View style={{ width: 36 }} />
+                            <TouchableOpacity
+                                disabled={!day?.trades?.length}
+                                onPress={() => setCardReq({ kind: 'day', date: day.day, source: month?.source ?? 'manual' })}
+                                style={styles.iconBtn}
+                            >
+                                <Share2 color={day?.trades?.length ? colors.primary : colors.textSecondary} size={19} />
+                            </TouchableOpacity>
                         </View>
 
                         {dayLoading ? (
@@ -462,12 +570,23 @@ export default function JournalScreen({ navigation }) {
                                                 </TouchableOpacity>
                                             )}
 
-                                            <TouchableOpacity
-                                                onPress={() => { setDayOpen(false); navigation.navigate('TradeDna', { positionId: t.id }); }}
-                                                style={styles.autopsyLink}
-                                            >
-                                                <Text style={styles.autopsyLinkText}>کالبدشکافی کامل این معامله ↗</Text>
-                                            </TouchableOpacity>
+                                            <View style={styles.cardFooterRow}>
+                                                <TouchableOpacity
+                                                    onPress={() => setCardReq({
+                                                        kind: 'trade', date: day.day, tradeId: t.id,
+                                                        source: month?.source ?? 'manual',
+                                                    })}
+                                                    style={styles.shareChip}
+                                                >
+                                                    <Share2 color={colors.primary} size={13} />
+                                                    <Text style={styles.shareChipText}>ساخت تصویر</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    onPress={() => { setDayOpen(false); navigation.navigate('TradeDna', { positionId: t.id }); }}
+                                                >
+                                                    <Text style={styles.autopsyLinkText}>کالبدشکافی کامل این معامله ↗</Text>
+                                                </TouchableOpacity>
+                                            </View>
                                         </GlassView>
                                     );
                                 })}
@@ -478,6 +597,82 @@ export default function JournalScreen({ navigation }) {
                             </ScrollView>
                         )}
                     </KeyboardAvoidingView>
+                </View>
+            </Modal>
+
+            {/* ── share card ────────────────────────────────────────── */}
+            <Modal visible={!!cardReq} animationType="fade" transparent onRequestClose={() => setCardReq(null)}>
+                <View style={styles.modalBackdrop}>
+                    <View style={styles.cardSheet}>
+                        <View style={styles.sheetHead}>
+                            <TouchableOpacity onPress={() => setCardReq(null)} style={styles.iconBtn}>
+                                <X color={colors.text} size={20} />
+                            </TouchableOpacity>
+                            <Text style={styles.sheetTitle}>تصویر برای اشتراک‌گذاری</Text>
+                            <View style={{ width: 36 }} />
+                        </View>
+
+                        <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 28 }}>
+                            <View style={styles.cardPreview}>
+                                {cardLoading || !card ? (
+                                    <View style={styles.previewLoading}><ActivityIndicator color={colors.primary} /></View>
+                                ) : (
+                                    <SvgXml xml={card.svg} width="100%" height="100%" />
+                                )}
+                            </View>
+
+                            <View style={styles.optRow}>
+                                <Text style={styles.optLabel}>پنهان کردن مبالغ (فقط پیپ و درصد)</Text>
+                                <Switch
+                                    value={hideMoney}
+                                    onValueChange={setHideMoney}
+                                    trackColor={{ true: colors.primary, false: colors.border }}
+                                />
+                            </View>
+                            {cardReq?.kind === 'trade' && (
+                                <View style={styles.optRow}>
+                                    <Text style={styles.optLabel}>یادداشت خودم هم روی تصویر باشد</Text>
+                                    <Switch
+                                        value={includeNote}
+                                        onValueChange={setIncludeNote}
+                                        trackColor={{ true: colors.primary, false: colors.border }}
+                                    />
+                                </View>
+                            )}
+                            <View style={styles.optRow}>
+                                <Text style={styles.optLabel}>تم روشن</Text>
+                                <Switch
+                                    value={cardTheme === 'light'}
+                                    onValueChange={(v) => setCardTheme(v ? 'light' : 'dark')}
+                                    trackColor={{ true: colors.primary, false: colors.border }}
+                                />
+                            </View>
+
+                            <Text style={styles.privacyNote}>
+                                یادداشت شخصی شما به‌صورت پیش‌فرض روی تصویر نیست. با «پنهان کردن مبالغ» هیچ عددِ دلاری روی کارت نمی‌ماند — حتی داخل جمله‌ها.
+                            </Text>
+
+                            <View style={styles.actionRow}>
+                                <TouchableOpacity
+                                    disabled={!card || busy}
+                                    onPress={() => shareCard(true)}
+                                    style={[styles.ghostBtn, styles.actionBtn]}
+                                >
+                                    <Download color={colors.textSecondary} size={15} />
+                                    <Text style={styles.ghostBtnText}>ذخیره</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    disabled={!card || busy}
+                                    onPress={() => shareCard(false)}
+                                    style={[styles.primaryBtn, styles.actionBtn]}
+                                >
+                                    {busy
+                                        ? <ActivityIndicator size="small" color="#fff" />
+                                        : <><Share2 color="#fff" size={15} /><Text style={styles.primaryBtnText}>اشتراک‌گذاری</Text></>}
+                                </TouchableOpacity>
+                            </View>
+                        </ScrollView>
+                    </View>
                 </View>
             </Modal>
 
@@ -617,4 +812,41 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     ghostBtnText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
     autopsyLink: { marginTop: 10, alignItems: 'flex-end' },
     autopsyLinkText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
+    cardFooterRow: {
+        flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
+        marginTop: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+    },
+    shareChip: {
+        flexDirection: 'row-reverse', alignItems: 'center', gap: 5,
+        paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: colors.primary,
+    },
+    shareChipText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
+
+    cardSheet: {
+        maxHeight: '94%', backgroundColor: colors.background,
+        borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    },
+    // 1080x1350 is 4:5 — the aspect ratio the card is composed at, so the
+    // preview is the image, not an approximation of it.
+    cardPreview: {
+        width: '100%', aspectRatio: 1080 / 1350, borderRadius: 14, overflow: 'hidden',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+        backgroundColor: isDark ? '#0B0E13' : '#FFFFFF',
+    },
+    previewLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    optRow: {
+        flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
+        paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+    },
+    optLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'right', writingDirection: 'rtl' },
+    privacyNote: {
+        fontSize: 11, color: colors.textSecondary, marginTop: 12, lineHeight: 18,
+        textAlign: 'right', writingDirection: 'rtl',
+    },
+    actionRow: { flexDirection: 'row-reverse', gap: 10, marginTop: 16 },
+    actionBtn: {
+        flex: 1, flexDirection: 'row-reverse', alignItems: 'center',
+        justifyContent: 'center', gap: 6,
+    },
 });

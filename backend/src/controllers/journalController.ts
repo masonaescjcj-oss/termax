@@ -18,13 +18,14 @@ import { AuthRequest } from '../middleware/auth';
 import { classifyContext, JournalTags } from '../services/insights/journal';
 import {
     autoTags, renderEntry, renderDayRecap, resultPips, stopPipsOf,
-    TAG_META, JournalTradeInput,
+    breaksDiscipline, TAG_META, JournalTradeInput,
 } from '../services/insights/journalEntry';
 import {
     buildMonth, computeStreak, sliceByTag, localDayKey, JournalRow,
     dayLabelFa, jalaliMonthOf,
 } from '../services/insights/journalCalendar';
 import { runAutopsy } from '../services/insights/autopsy';
+import { buildShareCard, CardOptions } from '../services/insights/shareCard';
 
 /** Trades older than this are not journalled — the record, not the archive. */
 const LOOKBACK_DAYS = 400;
@@ -191,6 +192,66 @@ function sparkline(candles: Array<{ close: number }>, entryIndex: number, exitIn
  * wrote for it. This is the only view that runs a full autopsy per
  * trade, which is what pays for the "one thing worth noticing" line.
  */
+/**
+ * The day view's payload. Extracted so the share card is built from the
+ * exact same numbers and sentences the screen shows — a card that could
+ * disagree with the day it came from would be worse than no card.
+ */
+async function buildDay(userId: string, date: string, tz: number, source: 'manual' | 'bot' | 'all') {
+    const all = await journalTrades(userId, source);
+    const day = all.filter(t => localDayKey(t.closeTime, tz) === date);
+    const notes = await TradeNote.listByPositions(userId, day.map(t => t.id)).catch(() => new Map());
+
+    const trades = day.map(t => {
+        let verdictFa: string | null = null;
+        let verdictEn: string | null = null;
+        let spark: ReturnType<typeof sparkline> = null;
+        const tags = [...t.tags];
+
+        try {
+            const report = runAutopsy({
+                symbol: t.symbol, side: t.side, volume: t.volume,
+                entryPrice: t.entryPrice, closePrice: t.closePrice,
+                openTime: t.openTime, closeTime: t.closeTime,
+                netProfit: t.netProfit, stopLoss: t.stopLoss, takeProfit: t.takeProfit,
+            });
+            if (report.ok) {
+                const notable = report.verdicts.find(v => v.key !== 'cleanLossOrWin');
+                if (notable) { verdictFa = notable.fa; verdictEn = notable.en; }
+                if (report.verdicts.some(v => v.key === 'stoppedThenReversed')) tags.push('stopHunted');
+                if (report.verdicts.some(v => v.key === 'gaveBackProfit')) tags.push('gaveBack');
+                spark = sparkline(report.candles, report.entryIndex, report.exitIndex);
+            }
+        } catch { /* the entry stands on the trade's own facts */ }
+
+        const note = notes.get(t.id) ?? null;
+        return {
+            id: t.id,
+            symbol: t.symbol, side: t.side, volume: t.volume,
+            entryPrice: t.entryPrice, closePrice: t.closePrice,
+            openTime: t.openTime, closeTime: t.closeTime,
+            netProfit: t.netProfit,
+            pips: resultPips(t),
+            stopPips: stopPipsOf(t),
+            tags: [...new Set(tags)],
+            tagMeta: [...new Set(tags)].map(k => TAG_META[k]).filter(Boolean),
+            entry: renderEntry(t, t.ctx, { verdictFa, verdictEn }),
+            context: t.ctx,
+            spark,
+            note: note ? { note: note.note, emotion: note.emotion, tags: note.tags, updatedAt: note.updatedAt } : null,
+        };
+    }).sort((a, b) => a.closeTime - b.closeTime);
+
+    return {
+        day: date,
+        labelFa: dayLabelFa(date),
+        recap: renderDayRecap(trades.map(t => ({
+            netProfit: t.netProfit, symbol: t.symbol, side: t.side, tags: t.tags,
+        }))),
+        trades,
+    };
+}
+
 export const getJournalDay = async (req: AuthRequest, res: Response) => {
     try {
         const date = String(req.query.date ?? '').slice(0, 10);
@@ -201,61 +262,7 @@ export const getJournalDay = async (req: AuthRequest, res: Response) => {
         const source = (['manual', 'bot', 'all'].includes(String(req.query.source))
             ? String(req.query.source) : 'manual') as 'manual' | 'bot' | 'all';
 
-        const all = await journalTrades(req.user!.id, source);
-        const day = all.filter(t => localDayKey(t.closeTime, tz) === date);
-        const notes = await TradeNote.listByPositions(req.user!.id, day.map(t => t.id)).catch(() => new Map());
-
-        const trades = day.map(t => {
-            let verdictFa: string | null = null;
-            let verdictEn: string | null = null;
-            let spark: ReturnType<typeof sparkline> = null;
-            const tags = [...t.tags];
-
-            try {
-                const report = runAutopsy({
-                    symbol: t.symbol, side: t.side, volume: t.volume,
-                    entryPrice: t.entryPrice, closePrice: t.closePrice,
-                    openTime: t.openTime, closeTime: t.closeTime,
-                    netProfit: t.netProfit, stopLoss: t.stopLoss, takeProfit: t.takeProfit,
-                });
-                if (report.ok) {
-                    const notable = report.verdicts.find(v => v.key !== 'cleanLossOrWin');
-                    if (notable) { verdictFa = notable.fa; verdictEn = notable.en; }
-                    if (report.verdicts.some(v => v.key === 'stoppedThenReversed')) tags.push('stopHunted');
-                    if (report.verdicts.some(v => v.key === 'gaveBackProfit')) tags.push('gaveBack');
-                    spark = sparkline(report.candles, report.entryIndex, report.exitIndex);
-                }
-            } catch { /* the entry stands on the trade's own facts */ }
-
-            const note = notes.get(t.id) ?? null;
-            return {
-                id: t.id,
-                symbol: t.symbol, side: t.side, volume: t.volume,
-                entryPrice: t.entryPrice, closePrice: t.closePrice,
-                openTime: t.openTime, closeTime: t.closeTime,
-                netProfit: t.netProfit,
-                pips: resultPips(t),
-                stopPips: stopPipsOf(t),
-                tags: [...new Set(tags)],
-                tagMeta: [...new Set(tags)].map(k => TAG_META[k]).filter(Boolean),
-                entry: renderEntry(t, t.ctx, { verdictFa, verdictEn }),
-                context: t.ctx,
-                spark,
-                note: note ? { note: note.note, emotion: note.emotion, tags: note.tags, updatedAt: note.updatedAt } : null,
-            };
-        }).sort((a, b) => a.closeTime - b.closeTime);
-
-        res.status(200).json({
-            success: true,
-            data: {
-                day: date,
-                labelFa: dayLabelFa(date),
-                recap: renderDayRecap(trades.map(t => ({
-                    netProfit: t.netProfit, symbol: t.symbol, side: t.side, tags: t.tags,
-                }))),
-                trades,
-            },
-        });
+        res.status(200).json({ success: true, data: await buildDay(req.user!.id, date, tz, source) });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -301,3 +308,112 @@ export const deleteJournalNote = async (req: AuthRequest, res: Response) => {
         res.status(500).json({ success: false, error: e.message });
     }
 };
+
+/**
+ * GET /journal/card — a day, a trade or a month as one shareable image.
+ *
+ * The SVG is built here and rasterised in the client (see shareCard.ts
+ * for why). Both privacy switches default to the safe answer: money is
+ * shown only because the trader is looking at their own card, and the
+ * private note is left out until it is explicitly asked for.
+ */
+export const getJournalCard = async (req: AuthRequest, res: Response) => {
+    try {
+        const kind = String(req.query.kind ?? 'day');
+        const tz = Math.max(-840, Math.min(840, num(req.query.tz, 0)));
+        const source = (['manual', 'bot', 'all'].includes(String(req.query.source))
+            ? String(req.query.source) : 'manual') as 'manual' | 'bot' | 'all';
+        const options: CardOptions = {
+            hideMoney: req.query.hideMoney === '1' || req.query.hideMoney === 'true',
+            includeNote: req.query.includeNote === '1' || req.query.includeNote === 'true',
+            theme: req.query.theme === 'light' ? 'light' : 'dark',
+        };
+
+        if (kind === 'month') {
+            const calendar = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+            const rows = (await journalTrades(req.user!.id, source)).map(toRow);
+            const today = localDayKey(Date.now(), tz);
+            const fallback = calendar === 'jalali'
+                ? jalaliMonthOf(today)
+                : { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) };
+            const year = num(req.query.year, fallback.year);
+            const month = Math.max(1, Math.min(12, num(req.query.month, fallback.month)));
+
+            const view = buildMonth(rows, { calendar, year, month, tzOffsetMinutes: tz });
+            const streak = computeStreak(rows, tz);
+            const card = buildShareCard({
+                kind: 'month',
+                monthLabel: view.monthLabel,
+                netProfit: view.totals.netProfit,
+                trades: view.totals.trades,
+                winRate: view.totals.winRate,
+                tradingDays: view.totals.tradingDays,
+                cleanDays: view.totals.cleanDays,
+                streak: streak.current,
+                firstWeekday: view.firstWeekday,
+                weekdayLabels: view.weekdayLabels,
+                days: view.days.map(d => ({
+                    label: d.label, trades: d.trades, netProfit: d.netProfit,
+                    intensity: d.intensity, clean: d.clean,
+                })),
+            }, options);
+            return res.status(200).json({ success: true, data: card });
+        }
+
+        const date = String(req.query.date ?? '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD' });
+        }
+        const day = await buildDay(req.user!.id, date, tz, source);
+
+        if (kind === 'trade') {
+            const id = String(req.query.tradeId ?? '');
+            const t = day.trades.find(x => x.id === id);
+            if (!t) return res.status(404).json({ success: false, message: 'Trade not found on that day' });
+            const card = buildShareCard({
+                kind: 'trade',
+                symbol: t.symbol, side: t.side, volume: t.volume,
+                netProfit: t.netProfit, pips: t.pips,
+                entryFa: t.entry.fa,
+                labelFa: day.labelFa,
+                tags: t.tagMeta.map(m => ({ fa: m.fa, tone: m.tone })),
+                spark: t.spark,
+                noteFa: t.note?.note ?? null,
+            }, options);
+            return res.status(200).json({ success: true, data: card });
+        }
+
+        if (kind !== 'day') {
+            return res.status(400).json({ success: false, message: 'kind must be day, trade or month' });
+        }
+
+        const card = buildShareCard({
+            kind: 'day',
+            labelFa: day.labelFa,
+            netProfit: Number(day.trades.reduce((s, t) => s + t.netProfit, 0).toFixed(2)),
+            trades: day.trades.length,
+            wins: day.trades.filter(t => t.netProfit > 0).length,
+            pips: Number(day.trades.reduce((s, t) => s + t.pips, 0).toFixed(1)),
+            recapFa: day.recap.fa,
+            // Only the habits that showed up more than once that day: a
+            // single tag on a single trade is not the day's story.
+            tags: dedupeTags(day.trades.flatMap(t => t.tagMeta)),
+            clean: day.trades.length > 0 && !day.trades.some(t => breaksDiscipline(t.tags)),
+            rows: day.trades.map(t => ({
+                symbol: t.symbol, side: t.side, volume: t.volume,
+                netProfit: t.netProfit, pips: t.pips,
+            })),
+        }, options);
+        res.status(200).json({ success: true, data: card });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+/** Tag metadata, deduped, risk tags first so the card leads with them. */
+function dedupeTags(metas: Array<{ key: string; fa: string; tone: string }>) {
+    const seen = new Map<string, { fa: string; tone: string }>();
+    for (const m of metas) if (m && !seen.has(m.key)) seen.set(m.key, { fa: m.fa, tone: m.tone });
+    const order = { risk: 0, good: 1, neutral: 2 } as Record<string, number>;
+    return [...seen.values()].sort((a, b) => (order[a.tone] ?? 3) - (order[b.tone] ?? 3));
+}
