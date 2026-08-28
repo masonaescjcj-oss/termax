@@ -27,7 +27,7 @@ const DEFAULT_BACKTEST_DAYS = 60;
  * The grammar, stated once, statically (cache-friendly). Everything the
  * validator enforces that the model tends to get wrong is called out.
  */
-const BUILDER_PROMPT = `You translate a trader's plain-language strategy description (Persian or English) into ONE JSON StrategySpec. Output ONLY the JSON object — no prose, no markdown fences.
+const BUILDER_PROMPT = `You translate a trader's plain-language strategy description into ONE JSON StrategySpec. Output ONLY the JSON object — no prose, no markdown fences.
 
 Schema:
 {
@@ -65,7 +65,7 @@ Rules of craft:
 - stopLoss is mandatory; prefer riskPercent sizing (0.5–2%) unless the user asks otherwise.
 - Fewer tuned numbers = better honesty grade. Do not add filters or indicators the user did not imply.
 - If the user's description is ambiguous, choose the most standard reading; never invent extra entry conditions.
-- Respect the user's language for "name" (Persian description => Persian name).
+- "name" must be a short English label, whatever language the description was written in.
 
 If you receive VALIDATION ERRORS, fix EXACTLY those paths and output the corrected full JSON again.`;
 
@@ -81,7 +81,7 @@ export interface BuildResult {
     attempts: number;
     spec?: StrategySpec;
     /** Deterministic rule sheet rendered from the final JSON. */
-    rules?: { fa: string[]; en: string[] };
+    rules?: { en: string[] };
     /** The auto-backtest's summary (includes the honesty grade), or its error. */
     backtest?: any;
     errors?: SpecError[];
@@ -178,7 +178,7 @@ export async function buildBotFromDescription(
             ok: true,
             attempts: attempt,
             spec,
-            rules: { fa: describeSpec(spec, 'fa'), en: describeSpec(spec, 'en') },
+            rules: { en: describeSpec(spec, 'en') },
             backtest,
         };
     }

@@ -175,17 +175,17 @@ const money = (n: number) => `${n < 0 ? '−' : ''}$${Math.abs(n).toFixed(2)}`;
 const signed = (n: number, digits = 1) =>
     `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(digits)}`;
 
-/**
- * A right-aligned RTL line; `x` is the right edge.
- *
- * text-anchor is resolved in the *logical* direction, so for RTL text the
- * "start" is the right-hand side. `end` would anchor the left edge at x
- * and run the whole line off the right of the card — which is exactly
- * what it did before this was fixed.
- */
-function rtl(text: string, x: number, y: number, size: number, fill: string, weight = '400'): string {
+/** A left-aligned line; `x` is the left edge. */
+function line(text: string, x: number, y: number, size: number, fill: string, weight = '400'): string {
     return `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" `
-        + `fill="${fill}" direction="rtl" text-anchor="start" `
+        + `fill="${fill}" direction="ltr" text-anchor="start" `
+        + `xml:space="preserve">${escapeXml(text)}</text>`;
+}
+
+/** A right-aligned line; `x` is the right edge. */
+function right(text: string, x: number, y: number, size: number, fill: string, weight = '400'): string {
+    return `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" `
+        + `fill="${fill}" direction="ltr" text-anchor="end" `
         + `xml:space="preserve">${escapeXml(text)}</text>`;
 }
 
@@ -207,7 +207,7 @@ function ltr(text: string, x: number, y: number, size: number, fill: string, wei
 
 function centred(text: string, x: number, y: number, size: number, fill: string, weight = '400'): string {
     return `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" `
-        + `fill="${fill}" direction="rtl" text-anchor="middle">${escapeXml(text)}</text>`;
+        + `fill="${fill}" direction="ltr" text-anchor="middle">${escapeXml(text)}</text>`;
 }
 
 function panel(x: number, y: number, w: number, h: number, p: Palette, r = 28): string {
@@ -215,33 +215,33 @@ function panel(x: number, y: number, w: number, h: number, p: Palette, r = 28): 
         + `stroke="${p.stroke}" stroke-width="1.5"/>`;
 }
 
-/** A tag pill laid out right-to-left from `right`. Returns svg and width. */
-function pill(label: string, right: number, y: number, colour: string): { svg: string; width: number } {
+/** A tag pill anchored at its left edge. Returns svg and width. */
+function pill(label: string, leftX: number, y: number, colour: string): { svg: string; width: number } {
     const size = 26;
     const w = estimateWidth(label, size) + 46;
-    const x = right - w;
+    const x = leftX;
     return {
         svg: `<rect x="${x}" y="${y}" width="${w}" height="52" rx="26" fill="none" stroke="${colour}" `
             + `stroke-width="2" stroke-opacity="0.75"/>`
             + `<text x="${x + w / 2}" y="${y + 35}" font-family="${FONT}" font-size="${size}" fill="${colour}" `
-            + `direction="rtl" text-anchor="middle">${escapeXml(label)}</text>`,
+            + `direction="ltr" text-anchor="middle">${escapeXml(label)}</text>`,
         width: w,
     };
 }
 
 /**
- * One row of pills, right to left. Pills that would cross `left` are
- * dropped rather than wrapped: the card's height is fixed, so a second
- * row would push the footer off the image.
+ * One row of pills, left to right. Pills that would cross the right
+ * margin are dropped rather than wrapped: the card's height is fixed, so
+ * a second row would push the footer off the image.
  */
-function pillRow(labels: Array<{ text: string; colour: string }>, right: number, left: number, y: number): string {
-    let cursor = right;
+function pillRow(labels: Array<{ text: string; colour: string }>, leftX: number, rightX: number, y: number): string {
+    let cursor = leftX;
     const out: string[] = [];
     for (const l of labels) {
         const made = pill(l.text, cursor, y, l.colour);
-        if (cursor - made.width < left) break;
+        if (cursor + made.width > rightX) break;
         out.push(made.svg);
-        cursor -= made.width + 14;
+        cursor += made.width + 14;
     }
     return out.join('');
 }
@@ -254,11 +254,11 @@ function shell(p: Palette, body: string, footerNote: string): string {
         + `<rect width="${CARD_W}" height="${CARD_H}" fill="url(#bg)"/>`
         + `<rect x="0" y="0" width="${CARD_W}" height="8" fill="${p.brand}"/>`
         + ltr('TERMAX', 72, 108, 40, p.text, '800', 6)
-        + rtl('ژورنال معاملات', CARD_W - 72, 108, 32, p.dim)
+        + right('TRADING JOURNAL', CARD_W - 72, 108, 32, p.dim)
         + body
         + `<line x1="72" y1="${CARD_H - 132}" x2="${CARD_W - 72}" y2="${CARD_H - 132}" stroke="${p.stroke}" stroke-width="1.5"/>`
         + ltr('termax.app', 72, CARD_H - 72, 28, p.dim)
-        + rtl(footerNote, CARD_W - 72, CARD_H - 72, 26, p.dim)
+        + right(footerNote, CARD_W - 72, CARD_H - 72, 26, p.dim)
         + `</svg>`;
 }
 
@@ -266,13 +266,13 @@ function shell(p: Palette, body: string, footerNote: string): string {
 
 export interface DayCardInput {
     kind: 'day';
-    labelFa: string;
+    label: string;
     netProfit: number;
     trades: number;
     wins: number;
     /** Signed pip total, so the money-hidden card still has a headline. */
     pips: number;
-    recapFa: string;
+    recap: string;
     tags: Array<{ fa: string; tone: string }>;
     clean: boolean;
     /** The day's trades, newest last. As many as fit are listed. */
@@ -286,11 +286,11 @@ export interface TradeCardInput {
     volume: number;
     netProfit: number;
     pips: number;
-    entryFa: string;
-    labelFa: string;
+    entry: string;
+    label: string;
     tags: Array<{ fa: string; tone: string }>;
     spark?: { values: number[]; entryAt: number; exitAt: number } | null;
-    noteFa?: string | null;
+    note?: string | null;
 }
 
 export interface MonthCardInput {
@@ -317,11 +317,11 @@ function statRow(cells: Array<{ label: string; value: string; colour?: string }>
     const out: string[] = [panel(72, y, CARD_W - 144, 150, p)];
     const slot = (CARD_W - 144) / cells.length;
     cells.forEach((c, i) => {
-        const cx = CARD_W - 72 - slot * (i + 0.5);
+        const cx = 72 + slot * (i + 0.5);
         out.push(centred(c.label, cx, y + 52, 28, p.dim));
         out.push(num(c.value, cx, y + 112, 46, c.colour ?? p.text, '700'));
         if (i < cells.length - 1) {
-            const lx = CARD_W - 72 - slot * (i + 1);
+            const lx = 72 + slot * (i + 1);
             out.push(`<line x1="${lx}" y1="${y + 30}" x2="${lx}" y2="${y + 120}" stroke="${p.stroke}" stroke-width="1.5"/>`);
         }
     });
@@ -360,31 +360,31 @@ function sparkPath(
 function dayCard(d: DayCardInput, o: CardOptions, p: Palette): string {
     const hide = !!o.hideMoney;
     const heroColour = d.netProfit >= 0 ? p.up : p.down;
-    const hero = hide ? `${iso(signed(d.pips))} پیپ` : money(d.netProfit);
+    const hero = hide ? `${signed(d.pips)} pips` : money(d.netProfit);
     const winRate = d.trades ? Number(((d.wins / d.trades) * 100).toFixed(1)) : 0;
 
     const body: string[] = [
-        rtl(d.labelFa, CARD_W - 72, 220, 46, p.text, '700'),
+        line(d.label, 72, 220, 46, p.text, '700'),
         // Money stands alone (LTR); a pip total carries a Persian unit and
         // therefore needs the RTL base with the number isolated.
         hide ? centred(hero, CARD_W / 2, 360, 108, heroColour, '800')
              : num(hero, CARD_W / 2, 360, 124, heroColour, '800'),
-        centred(hide ? 'مجموع پیپ روز' : 'سود/زیان روز', CARD_W / 2, 412, 30, p.dim),
+        centred(hide ? 'PIPS FOR THE DAY' : 'PROFIT / LOSS', CARD_W / 2, 412, 30, p.dim),
         statRow([
-            { label: 'معامله', value: faDigits(d.trades) },
-            { label: 'برد', value: faDigits(d.wins) },
-            { label: 'وین‌ریت', value: `${winRate}%` },
+            { label: 'TRADES', value: String(d.trades) },
+            { label: 'WINNERS', value: String(d.wins) },
+            { label: 'WIN RATE', value: `${winRate}%` },
         ], 440, p),
     ];
 
-    const recap = hide ? redactMoney(d.recapFa) : d.recapFa;
+    const recap = hide ? redactMoney(d.recap) : d.recap;
     const lines = wrapText(recap, 34, CARD_W - 200, 3);
     const recapTop = 620;
     body.push(panel(72, recapTop, CARD_W - 144, 60 + lines.length * 54, p));
-    lines.forEach((l, i) => body.push(rtl(l, CARD_W - 112, recapTop + 60 + i * 54, 34, p.text)));
+    lines.forEach((l, i) => body.push(line(l, 112, recapTop + 60 + i * 54, 34, p.text)));
 
     const chipsY = recapTop + 60 + lines.length * 54 + 40;
-    body.push(pillRow(d.tags.map(t => ({ text: t.fa, colour: toneColour(t.tone, p) })), CARD_W - 72, 72, chipsY));
+    body.push(pillRow(d.tags.map(t => ({ text: t.fa, colour: toneColour(t.tone, p) })), 72, CARD_W - 72, chipsY));
 
     const y = chipsY + 92;
 
@@ -401,7 +401,7 @@ function dayCard(d: DayCardInput, o: CardOptions, p: Palette): string {
     if (d.clean) {
         body.push(`<rect x="72" y="${y}" width="${CARD_W - 144}" height="86" rx="24" `
             + `fill="none" stroke="${p.up}" stroke-width="2.5" stroke-opacity="0.55"/>`);
-        body.push(centred('روز منظم — هر معامله با حد ضرر، بدون انتقام، بدون حجم غیرعادی',
+        body.push(centred('A disciplined day — every trade stopped, no revenge, no oversizing',
             CARD_W / 2, y + 54, 27, p.up));
     } else if (shown.length) {
         body.push(panel(72, y, CARD_W - 144, 46 + shown.length * ROW_H
@@ -410,38 +410,36 @@ function dayCard(d: DayCardInput, o: CardOptions, p: Palette): string {
             const ry = y + 46 + i * ROW_H;
             const good = r.netProfit >= 0;
             const colour = good ? p.up : p.down;
-            body.push(rtl(`${r.side === 'BUY' ? 'خرید' : 'فروش'} ${r.volume} ${r.symbol}`,
-                CARD_W - 112, ry, 30, p.text));
-            body.push(`<text x="112" y="${ry}" font-family="${FONT}" font-size="30" font-weight="700" `
-                + `fill="${colour}" direction="ltr" text-anchor="start">`
-                + `${escapeXml(hide ? `${signed(r.pips)}p` : money(r.netProfit))}</text>`);
+            body.push(line(`${r.side} ${r.volume} ${r.symbol}`, 112, ry, 30, p.text));
+            body.push(right(hide ? `${signed(r.pips)}p` : money(r.netProfit),
+                CARD_W - 112, ry, 30, colour, '700'));
             if (i < shown.length - 1) {
                 body.push(`<line x1="112" y1="${ry + 18}" x2="${CARD_W - 112}" y2="${ry + 18}" `
                     + `stroke="${p.stroke}" stroke-width="1"/>`);
             }
         });
         if (rows.length > shown.length) {
-            body.push(centred(`و ${faDigits(rows.length - shown.length)} معامله‌ی دیگر`,
+            body.push(centred(`and ${rows.length - shown.length} more`,
                 CARD_W / 2, y + 46 + shown.length * ROW_H + 24, 26, p.dim));
         }
     }
 
-    return shell(p, body.join(''), `${faDigits(d.trades)} معامله در این روز`);
+    return shell(p, body.join(''), `${d.trades} trade${d.trades === 1 ? '' : 's'} on this day`);
 }
 
 function tradeCard(t: TradeCardInput, o: CardOptions, p: Palette): string {
     const hide = !!o.hideMoney;
     const heroColour = t.netProfit >= 0 ? p.up : p.down;
-    const hero = hide ? `${iso(signed(t.pips))} پیپ` : money(t.netProfit);
-    const dirFa = t.side === 'BUY' ? 'خرید' : 'فروش';
+    const hero = hide ? `${signed(t.pips)} pips` : money(t.netProfit);
+    const dir = t.side;
 
-    const withNote = !!(o.includeNote && t.noteFa);
+    const withNote = !!(o.includeNote && t.note);
     const body: string[] = [
-        rtl(`${dirFa} ${t.volume} ${t.symbol}`, CARD_W - 72, 240, 50, p.text, '700'),
-        rtl(t.labelFa, CARD_W - 72, 292, 28, p.dim),
+        line(`${dir} ${t.volume} ${t.symbol}`, 72, 240, 50, p.text, '700'),
+        line(t.label, 72, 292, 28, p.dim),
         hide ? centred(hero, CARD_W / 2, 420, 116, heroColour, '800')
              : num(hero, CARD_W / 2, 420, 132, heroColour, '800'),
-        centred(hide ? 'نتیجه' : `${iso(signed(t.pips))} پیپ`, CARD_W / 2, 468, 32, p.dim),
+        centred(hide ? 'RESULT' : `${signed(t.pips)} pips`, CARD_W / 2, 468, 32, p.dim),
     ];
 
     const hasSpark = !!t.spark?.values?.length;
@@ -451,44 +449,44 @@ function tradeCard(t: TradeCardInput, o: CardOptions, p: Palette): string {
     }
 
     const top = hasSpark ? 770 : 520;
-    const entry = hide ? redactMoney(t.entryFa) : t.entryFa;
+    const entry = hide ? redactMoney(t.entry) : t.entry;
     // A note needs room, and the card's height is fixed: the entry gives
     // up lines rather than the note being cut off below the footer.
     const lines = wrapText(entry, 34, CARD_W - 200, withNote ? 2 : 4);
     body.push(panel(72, top, CARD_W - 144, 60 + lines.length * 54, p));
-    lines.forEach((l, i) => body.push(rtl(l, CARD_W - 112, top + 60 + i * 54, 34, p.text)));
+    lines.forEach((l, i) => body.push(line(l, 112, top + 60 + i * 54, 34, p.text)));
 
     let cursorY = top + 60 + lines.length * 54 + 40;
-    body.push(pillRow(t.tags.map(x => ({ text: x.fa, colour: toneColour(x.tone, p) })), CARD_W - 72, 72, cursorY));
+    body.push(pillRow(t.tags.map(x => ({ text: x.fa, colour: toneColour(x.tone, p) })), 72, CARD_W - 72, cursorY));
     cursorY += 92;
 
     if (withNote) {
-        const note = hide ? redactMoney(t.noteFa!) : t.noteFa!;
+        const note = hide ? redactMoney(t.note!) : t.note!;
         const noteLines = wrapText(note ? `«${note}»` : '', 30, CARD_W - 220, 2);
-        body.push(`<rect x="${CARD_W - 80}" y="${cursorY}" width="4" `
+        body.push(`<rect x="76" y="${cursorY}" width="4" `
             + `height="${noteLines.length * 46 + 20}" fill="${p.brand}"/>`);
-        noteLines.forEach((l, i) => body.push(rtl(l, CARD_W - 104, cursorY + 36 + i * 46, 30, p.dim)));
+        noteLines.forEach((l, i) => body.push(line(l, 104, cursorY + 36 + i * 46, 30, p.dim)));
     }
 
-    return shell(p, body.join(''), 'یک معامله از ژورنال');
+    return shell(p, body.join(''), 'One trade from the journal');
 }
 
 function monthCard(m: MonthCardInput, o: CardOptions, p: Palette): string {
     const hide = !!o.hideMoney;
 
     const body: string[] = [
-        rtl(m.monthLabel, CARD_W - 72, 225, 52, p.text, '700'),
+        line(m.monthLabel, 72, 225, 52, p.text, '700'),
         statRow([
-            { label: 'معامله', value: faDigits(m.trades) },
-            { label: 'وین‌ریت', value: `${m.winRate}%` },
-            { label: 'روز منظم', value: `${faDigits(m.cleanDays)}/${faDigits(m.tradingDays)}` },
+            { label: 'TRADES', value: String(m.trades) },
+            { label: 'WIN RATE', value: `${m.winRate}%` },
+            { label: 'CLEAN DAYS', value: `${m.cleanDays}/${m.tradingDays}` },
         ], 265, p),
     ];
 
     // With money hidden the headline becomes the discipline streak, which
     // is the number this app would rather people shared anyway.
     if (hide) {
-        body.push(centred(`${faDigits(m.streak)} روز منظم پشت سر هم`, CARD_W / 2, 505, 56, p.amber, '800'));
+        body.push(centred(`${m.streak} disciplined days in a row`, CARD_W / 2, 505, 52, p.amber, '800'));
     } else {
         body.push(num(money(m.netProfit), CARD_W / 2, 510, 88, m.netProfit >= 0 ? p.up : p.down, '800'));
     }
@@ -500,18 +498,18 @@ function monthCard(m: MonthCardInput, o: CardOptions, p: Palette): string {
     const cellW = 122, cellH = 84, gap = 10;
     const gridTop = 590;
     const gridW = 7 * cellW + 6 * gap;
-    const gridRight = CARD_W - (CARD_W - gridW) / 2;
+    const gridLeft = (CARD_W - gridW) / 2;
     const rows = Math.ceil((m.firstWeekday + m.days.length) / 7);
 
     body.push(panel(72, gridTop - 45, CARD_W - 144, 85 + rows * (cellH + gap), p));
     m.weekdayLabels.slice(0, 7).forEach((w, i) => {
-        body.push(centred(w, gridRight - (i + 0.5) * cellW - i * gap, gridTop, 30, p.dim));
+        body.push(centred(w, gridLeft + (i + 0.5) * cellW + i * gap, gridTop, 30, p.dim));
     });
 
     m.days.forEach((d, idx) => {
         const slot = m.firstWeekday + idx;
         const col = slot % 7, row = Math.floor(slot / 7);
-        const x = gridRight - (col + 1) * cellW - col * gap;
+        const x = gridLeft + col * (cellW + gap);
         const y = gridTop + 24 + row * (cellH + gap);
         const alpha = d.trades ? 0.18 + Math.min(1, Math.abs(d.intensity)) * 0.62 : 0;
         const hex = Math.round(alpha * 255).toString(16).padStart(2, '0');
@@ -528,7 +526,7 @@ function monthCard(m: MonthCardInput, o: CardOptions, p: Palette): string {
         }
     });
 
-    return shell(p, body.join(''), `${faDigits(m.trades)} معامله، ${faDigits(m.tradingDays)} روز معاملاتی`);
+    return shell(p, body.join(''), `${m.trades} trades over ${m.tradingDays} trading days`);
 }
 
 /**
@@ -547,19 +545,19 @@ export function buildShareCard(input: CardInput, options: CardOptions = {}): {
 
     if (input.kind === 'day') {
         svg = dayCard(input, options, p);
-        alt = `${input.labelFa} — ${input.trades} معامله، ${input.wins} برد`
-            + (hide ? `، ${signed(input.pips)} پیپ` : `، ${money(input.netProfit)}`);
-        stem = `termax-day-${input.labelFa.replace(/\s+/g, '-')}`;
+        alt = `${input.label} — ${input.trades} trades, ${input.wins} winners`
+            + (hide ? `, ${signed(input.pips)} pips` : `, ${money(input.netProfit)}`);
+        stem = `termax-day-${input.label.replace(/\s+/g, '-')}`;
     } else if (input.kind === 'trade') {
         svg = tradeCard(input, options, p);
-        alt = `${input.side === 'BUY' ? 'خرید' : 'فروش'} ${input.volume} ${input.symbol} — `
-            + (hide ? `${signed(input.pips)} پیپ` : money(input.netProfit));
+        alt = `${input.side} ${input.volume} ${input.symbol} — `
+            + (hide ? `${signed(input.pips)} pips` : money(input.netProfit));
         stem = `termax-trade-${input.symbol.replace(/[^\w]/g, '')}`;
     } else {
         svg = monthCard(input, options, p);
-        alt = `${input.monthLabel} — ${input.trades} معامله، وین‌ریت ${input.winRate}%`
-            + `، ${input.cleanDays} روز منظم از ${input.tradingDays}`
-            + (hide ? '' : `، ${money(input.netProfit)}`);
+        alt = `${input.monthLabel} — ${input.trades} trades, ${input.winRate}% win rate`
+            + `, ${input.cleanDays} disciplined days of ${input.tradingDays}`
+            + (hide ? '' : `, ${money(input.netProfit)}`);
         stem = `termax-month-${input.monthLabel.replace(/\s+/g, '-')}`;
     }
 

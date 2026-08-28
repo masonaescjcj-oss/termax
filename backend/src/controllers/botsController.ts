@@ -229,7 +229,7 @@ export const getBotReport = async (req: AuthRequest, res: Response) => {
             success: true,
             data: {
                 bot: { id: row.id, name: row.name, status: row.status, symbol: row.spec.symbol, startedAt: row.startedAt, liveStartedAt: row.liveStartedAt, liveVolumeMode: row.liveVolumeMode },
-                rules: describeSpec(row.spec, 'fa'),
+                rules: describeSpec(row.spec, 'en'),
                 watchdog,
                 forward,
                 openPosition: (() => {

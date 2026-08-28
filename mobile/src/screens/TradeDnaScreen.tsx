@@ -118,7 +118,7 @@ export default function TradeDnaScreen({ navigation, route }) {
             });
             if (res.data?.success) {
                 setGuard((g: any) => g ? { ...g, config: res.data.data.config } : g);
-                showToast(enabled ? 'محافظ ریسک روشن شد' : 'محافظ ریسک خاموش شد', enabled ? 'success' : 'info');
+                showToast(enabled ? 'Risk guard is on' : 'Risk guard is off', enabled ? 'success' : 'info');
                 load(true);
             }
         } catch (e: any) {
@@ -179,7 +179,7 @@ export default function TradeDnaScreen({ navigation, route }) {
                     <>
                         {profile.trades < 10 && (
                             <GlassView intensity={14} style={styles.card}>
-                                <Text style={styles.noteText}>هنوز {profile.trades} معامله‌ی بسته دارید. با معاملات بیشتر، الگوهای رفتاری‌تان اینجا شمرده می‌شود — نه حدس زده.</Text>
+                                <Text style={styles.noteText}>You have {profile.trades} closed trades so far. With more, your behavioural patterns get counted here — not guessed.</Text>
                             </GlassView>
                         )}
 
@@ -187,36 +187,36 @@ export default function TradeDnaScreen({ navigation, route }) {
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.cardHeader}>
                                     <CalendarDays color={colors.primary} size={18} />
-                                    <Text style={styles.cardTitle}>گزارش این هفته</Text>
+                                    <Text style={styles.cardTitle}>This week</Text>
                                 </View>
-                                <Text style={styles.findingText}>{digest.headlineFa}</Text>
+                                <Text style={styles.findingText}>{digest.headlineEn}</Text>
                                 <View style={styles.factsRow}>
                                     <View style={styles.factCell}>
-                                        <Text style={styles.factLabel}>دستی</Text>
+                                        <Text style={styles.factLabel}>Manual</Text>
                                         <Text style={[styles.factValue, { color: digest.manual.netProfit >= 0 ? colors.success : colors.danger }]}>{money(digest.manual.netProfit)}</Text>
                                     </View>
                                     <View style={styles.factCell}>
-                                        <Text style={styles.factLabel}>ربات‌ها</Text>
+                                        <Text style={styles.factLabel}>Bots</Text>
                                         <Text style={[styles.factValue, { color: digest.botsNet >= 0 ? colors.success : colors.danger }]}>{money(digest.botsNet)}</Text>
                                     </View>
                                     <View style={styles.factCell}>
-                                        <Text style={styles.factLabel}>وین‌ریت دستی</Text>
+                                        <Text style={styles.factLabel}>Manual win rate</Text>
                                         <Text style={styles.factValue}>{digest.manual.winRate}%</Text>
                                     </View>
                                 </View>
                                 {digest.manual.bestDay && (
-                                    <Text style={styles.noteText}>بهترین روز: {digest.manual.bestDay.day} ({money(digest.manual.bestDay.netProfit)})
-                                        {digest.manual.worstDay ? ` · بدترین روز: ${digest.manual.worstDay.day} (${money(digest.manual.worstDay.netProfit)})` : ''}</Text>
+                                    <Text style={styles.noteText}>Best day: {digest.manual.bestDay.day} ({money(digest.manual.bestDay.netProfit)})
+                                        {digest.manual.worstDay ? ` · worst day: ${digest.manual.worstDay.day} (${money(digest.manual.worstDay.netProfit)})` : ''}</Text>
                                 )}
                                 {digest.bots.length > 0 && digest.bots.map((b: any, i: number) => (
                                     <Text key={i} style={styles.noteText}>
-                                        {b.paused ? '⛔ ' : '• '}{b.name}: {b.trades} معامله، {money(b.netProfit)}{b.paused ? ' (نگهبان متوقفش کرد)' : ''}
+                                        {b.paused ? '⛔ ' : '• '}{b.name}: {b.trades} trades, {money(b.netProfit)}{b.paused ? ' (the watchdog stopped it)' : ''}
                                     </Text>
                                 ))}
                                 {digest.focus && (
                                     <View style={styles.focusBox}>
                                         <Flame color={'#F5A623'} size={15} />
-                                        <Text style={[styles.findingText, { color: '#F5A623' }]}>یک کار برای این هفته: {digest.focus.fa}</Text>
+                                        <Text style={[styles.findingText, { color: '#F5A623' }]}>One thing to fix this week: {digest.focus.en}</Text>
                                     </View>
                                 )}
                             </GlassView>
@@ -229,7 +229,7 @@ export default function TradeDnaScreen({ navigation, route }) {
                                         {guard.config.enabled
                                             ? <ShieldCheck color={colors.success} size={18} />
                                             : <ShieldOff color={colors.textSecondary} size={18} />}
-                                        <Text style={styles.cardTitle}>محافظ ریسک روزانه</Text>
+                                        <Text style={styles.cardTitle}>Daily risk guard</Text>
                                     </View>
                                     <Switch
                                         value={!!guard.config.enabled}
@@ -243,31 +243,31 @@ export default function TradeDnaScreen({ navigation, route }) {
                                     <>
                                         <View style={styles.factsRow}>
                                             <View style={styles.factCell}>
-                                                <Text style={styles.factLabel}>ضرر امروز</Text>
+                                                <Text style={styles.factLabel}>Today's loss</Text>
                                                 <Text style={[styles.factValue, { color: guard.state.readings.todayRealised < 0 ? colors.danger : colors.success }]}>
                                                     {money(guard.state.readings.todayRealised)}
                                                 </Text>
                                             </View>
                                             <View style={styles.factCell}>
-                                                <Text style={styles.factLabel}>سقف {guard.config.maxDailyLossPct}٪</Text>
+                                                <Text style={styles.factLabel}>Limit {guard.config.maxDailyLossPct}%</Text>
                                                 <Text style={styles.factValue}>{guard.state.readings.limitMoney !== null ? money(guard.state.readings.limitMoney) : '—'}</Text>
                                             </View>
                                             <View style={styles.factCell}>
-                                                <Text style={styles.factLabel}>معاملات امروز</Text>
+                                                <Text style={styles.factLabel}>Trades today</Text>
                                                 <Text style={styles.factValue}>{guard.state.readings.todayTrades}</Text>
                                             </View>
                                         </View>
                                         {guard.state.locked ? (
                                             <View style={styles.lockedBox}>
                                                 <Lock color={colors.danger} size={15} />
-                                                <Text style={[styles.findingText, { color: colors.danger }]}>{guard.state.fa}</Text>
+                                                <Text style={[styles.findingText, { color: colors.danger }]}>{guard.state.en}</Text>
                                             </View>
                                         ) : (
-                                            <Text style={styles.noteText}>{guard.state.fa} — با رسیدن به سقف، سفارش جدید تا نیمه‌شب UTC رد می‌شود؛ پوزیشن‌های باز با حد ضرر خودشان می‌مانند.</Text>
+                                            <Text style={styles.noteText}>{guard.state.en} — once the limit is reached, new orders are refused until midnight UTC; open positions keep their own stops.</Text>
                                         )}
                                     </>
                                 ) : (
-                                    <Text style={styles.noteText}>خاموش است. با روشن کردنش، وقتی ضرر امروزتان به سقف تعیین‌شده برسد، اپ تا فردا سفارش جدید نمی‌پذیرد — تصمیمی که در آرامش گرفته می‌شود، نه وسط ضرر.</Text>
+                                    <Text style={styles.noteText}>Off. Turn it on and once today's loss reaches your limit the app takes no new order until tomorrow — a decision made calmly rather than mid-drawdown.</Text>
                                 )}
                             </GlassView>
                         )}
@@ -276,12 +276,12 @@ export default function TradeDnaScreen({ navigation, route }) {
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.cardHeader}>
                                     <Dna color={colors.primary} size={18} />
-                                    <Text style={styles.cardTitle}>الگوهای شما</Text>
+                                    <Text style={styles.cardTitle}>Your patterns</Text>
                                 </View>
                                 {profile.findings.map((f: any, i: number) => (
                                     <View key={i} style={styles.findingRow}>
                                         <SevIcon severity={f.severity} />
-                                        <Text style={styles.findingText}>{f.fa}</Text>
+                                        <Text style={styles.findingText}>{f.en}</Text>
                                     </View>
                                 ))}
                             </GlassView>
@@ -291,20 +291,20 @@ export default function TradeDnaScreen({ navigation, route }) {
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.cardHeader}>
                                     <Layers3 color={colors.primary} size={18} />
-                                    <Text style={styles.cardTitle}>عملکرد بر حسب حالت بازار</Text>
+                                    <Text style={styles.cardTitle}>Performance by market regime</Text>
                                 </View>
-                                <Text style={styles.noteText}>هر معامله با رژیم بازارِ لحظه‌ی ورودش برچسب خورده ({profile.context.tagged} معامله). گروه‌های کمتر از ۴ معامله نمایش داده نمی‌شوند.</Text>
+                                <Text style={styles.noteText}>Each trade is tagged with the market regime at its entry ({profile.context.tagged} trades). Buckets under 4 trades are not shown.</Text>
                                 {[
-                                    { title: 'روند', rows: profile.context.slices.trend },
-                                    { title: 'نوسان', rows: profile.context.slices.volatility },
-                                    { title: 'جهت', rows: profile.context.slices.withTrend },
+                                    { title: 'Trend', rows: profile.context.slices.trend },
+                                    { title: 'Volatility', rows: profile.context.slices.volatility },
+                                    { title: 'Direction', rows: profile.context.slices.withTrend },
                                 ].filter(g => g.rows.length > 0).map((g, gi) => (
                                     <View key={gi} style={{ marginTop: 10 }}>
                                         <Text style={[styles.factLabel, { marginBottom: 4 }]}>{g.title}</Text>
                                         {g.rows.map((r: any) => (
                                             <View key={r.key} style={styles.sliceRow}>
-                                                <Text style={styles.sliceLabel}>{r.labelFa}</Text>
-                                                <Text style={styles.sliceMeta}>{r.trades} معامله · {r.winRate}%</Text>
+                                                <Text style={styles.sliceLabel}>{r.labelEn}</Text>
+                                                <Text style={styles.sliceMeta}>{r.trades} trades · {r.winRate}%</Text>
                                                 <Text style={[styles.sliceNet, { color: r.netProfit >= 0 ? colors.success : colors.danger }]}>{money(r.netProfit)}</Text>
                                             </View>
                                         ))}
@@ -317,7 +317,7 @@ export default function TradeDnaScreen({ navigation, route }) {
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.cardHeader}>
                                     <Clock color={colors.primary} size={18} />
-                                    <Text style={styles.cardTitle}>سود/زیان بر حسب ساعت (UTC)</Text>
+                                    <Text style={styles.cardTitle}>Profit / loss by hour (UTC)</Text>
                                 </View>
                                 <HourStrip hourly={profile.hourly} />
                             </GlassView>
@@ -326,10 +326,10 @@ export default function TradeDnaScreen({ navigation, route }) {
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <Microscope color={colors.primary} size={18} />
-                                <Text style={styles.cardTitle}>کالبدشکافی معامله</Text>
+                                <Text style={styles.cardTitle}>Trade autopsy</Text>
                             </View>
-                            <Text style={styles.noteText}>روی هر معامله‌ی بسته بزنید تا از روی کندل‌های واقعی بگوید چرا این نتیجه را داد.</Text>
-                            {closed.length === 0 && <Text style={styles.noteText}>معامله‌ی بسته‌ای ندارید.</Text>}
+                            <Text style={styles.noteText}>Tap any closed trade to hear why it ended that way, read off the real candles.</Text>
+                            {closed.length === 0 && <Text style={styles.noteText}>You have no closed trades.</Text>}
                             {closed.map((p: any) => (
                                 <TouchableOpacity key={String(p.id ?? p._id)} style={styles.tradeRow} onPress={() => openAutopsy(p)}>
                                     <View style={{ flex: 1 }}>
@@ -353,7 +353,7 @@ export default function TradeDnaScreen({ navigation, route }) {
         const d = autopsy;
         return (
             <>
-                <Header title="چرا این نتیجه؟" onBack={() => setView('dna')} />
+                <Header title="Why this result?" onBack={() => setView('dna')} />
                 <ScrollView contentContainerStyle={styles.content}>
                     {autopsyLoading || !d ? <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} /> : (
                         <>
@@ -363,29 +363,29 @@ export default function TradeDnaScreen({ navigation, route }) {
                                     {money(d.trade.netProfit)}
                                 </Text>
                                 <View style={styles.factsRow}>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>نتیجه</Text><Text style={styles.factValue}>{d.facts.pips} pips</Text></View>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>بهترین لحظه</Text><Text style={[styles.factValue, { color: colors.success }]}>+{d.facts.mfePips}</Text></View>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>بدترین لحظه</Text><Text style={[styles.factValue, { color: colors.danger }]}>-{d.facts.maePips}</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>Result</Text><Text style={styles.factValue}>{d.facts.pips} pips</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>Best moment</Text><Text style={[styles.factValue, { color: colors.success }]}>+{d.facts.mfePips}</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>Worst moment</Text><Text style={[styles.factValue, { color: colors.danger }]}>-{d.facts.maePips}</Text></View>
                                 </View>
                                 <View style={styles.factsRow}>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>بعد از خروج</Text><Text style={styles.factValue}>{d.facts.afterExitPips} pips</Text></View>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>حد ضرر</Text><Text style={styles.factValue}>{d.facts.stopPips ?? '—'} pips</Text></View>
-                                    <View style={styles.factCell}><Text style={styles.factLabel}>هزینه‌ها</Text><Text style={styles.factValue}>{money(d.facts.costs)}</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>After exit</Text><Text style={styles.factValue}>{d.facts.afterExitPips} pips</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>Stop</Text><Text style={styles.factValue}>{d.facts.stopPips ?? '—'} pips</Text></View>
+                                    <View style={styles.factCell}><Text style={styles.factLabel}>Costs</Text><Text style={styles.factValue}>{money(d.facts.costs)}</Text></View>
                                 </View>
                             </GlassView>
 
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.cardHeader}>
                                     <Microscope color={colors.primary} size={18} />
-                                    <Text style={styles.cardTitle}>یافته‌ها</Text>
+                                    <Text style={styles.cardTitle}>Findings</Text>
                                 </View>
                                 {d.verdicts.map((v: any, i: number) => (
                                     <View key={i} style={styles.findingRow}>
                                         <SevIcon severity={v.key === 'cleanLossOrWin' ? 'INFO' : 'ALERT'} />
-                                        <Text style={styles.findingText}>{v.fa}</Text>
+                                        <Text style={styles.findingText}>{v.en}</Text>
                                     </View>
                                 ))}
-                                <Text style={styles.noteText}>محاسبه‌شده از کندل‌های {d.timeframe} واقعی اطراف ورود و خروج — نه حدس.</Text>
+                                <Text style={styles.noteText}>Computed from the real {d.timeframe} candles around the entry and exit — not guessed.</Text>
                             </GlassView>
                         </>
                     )}
@@ -412,9 +412,9 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     card: { borderRadius: 16, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
     cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
     cardTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
-    noteText: { fontSize: 12.5, color: colors.textSecondary, lineHeight: 20, marginTop: 4, textAlign: 'right', writingDirection: 'rtl' },
+    noteText: { fontSize: 12.5, color: colors.textSecondary, lineHeight: 20, marginTop: 4, textAlign: 'left' },
     findingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 10 },
-    findingText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 22, textAlign: 'right', writingDirection: 'rtl' },
+    findingText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 22, textAlign: 'left' },
     hourRow: { flexDirection: 'row', gap: 2, marginTop: 4 },
     hourCell: { flex: 1, height: 26, borderRadius: 4 },
     hourLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
@@ -434,7 +434,7 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', paddingVertical: 7,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
     },
-    sliceLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'right', writingDirection: 'rtl' },
+    sliceLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'left' },
     sliceMeta: { fontSize: 11, color: colors.textSecondary, marginHorizontal: 8 },
     sliceNet: { fontSize: 12.5, fontWeight: '700' },
     lockedBox: {
@@ -443,6 +443,6 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     },
     factsRow: { flexDirection: 'row', marginTop: 12 },
     factCell: { flex: 1 },
-    factLabel: { fontSize: 11, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl' },
-    factValue: { fontSize: 14, fontWeight: '700', color: colors.text, marginTop: 2, textAlign: 'right' },
+    factLabel: { fontSize: 11, color: colors.textSecondary, textAlign: 'left' },
+    factValue: { fontSize: 14, fontWeight: '700', color: colors.text, marginTop: 2, textAlign: 'left' },
 });

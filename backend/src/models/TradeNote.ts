@@ -12,13 +12,13 @@ import { supabase } from '../config/supabase';
 export const EMOTIONS = ['confident', 'disciplined', 'anxious', 'fearful', 'greedy', 'bored'] as const;
 export type Emotion = typeof EMOTIONS[number];
 
-export const EMOTION_FA: Record<Emotion, string> = {
-    confident: 'با اعتماد',
-    disciplined: 'منظم',
-    anxious: 'مضطرب',
-    fearful: 'ترسیده',
-    greedy: 'طمع‌کار',
-    bored: 'بی‌حوصله',
+export const EMOTION_LABELS: Record<Emotion, string> = {
+    confident: 'Confident',
+    disciplined: 'Disciplined',
+    anxious: 'Anxious',
+    fearful: 'Fearful',
+    greedy: 'Greedy',
+    bored: 'Bored',
 };
 
 export interface TradeNoteRow {

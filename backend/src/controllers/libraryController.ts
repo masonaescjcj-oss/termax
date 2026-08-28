@@ -93,7 +93,7 @@ export const listLibrary = async (req: AuthRequest, res: Response) => {
                 mine: row.userId === req.user!.id,
                 symbol: row.spec.symbol,
                 timeframe: row.spec.timeframe,
-                rules: describeSpec(row.spec, 'fa'),
+                rules: describeSpec(row.spec, 'en'),
                 clones: row.clones,
                 publishedAt: row.publishedAt,
                 forward: stats,

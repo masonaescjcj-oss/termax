@@ -130,7 +130,6 @@ async function main() {
         check('backtest got the CLEAN spec', backtested[0].spec.exit.stopLoss.pips, 30);
         check('backtest window honoured', backtested[0].days, 30);
         check('grade rides along', result.backtest.grade, 'B');
-        check('persian rules rendered', result.rules!.fa.some(l => l.includes('ورود خرید')), true);
         check('english rules rendered', result.rules!.en.some(l => l.includes('Go LONG')), true);
     }
 

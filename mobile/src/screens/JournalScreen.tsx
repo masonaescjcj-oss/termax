@@ -46,12 +46,12 @@ const compact = (v: number) => {
 
 /** The closed list of moods, mirrored from the server's EMOTIONS. */
 const EMOTIONS = [
-    { key: 'confident', fa: 'با اعتماد' },
-    { key: 'disciplined', fa: 'منظم' },
-    { key: 'anxious', fa: 'مضطرب' },
-    { key: 'fearful', fa: 'ترسیده' },
-    { key: 'greedy', fa: 'طمع‌کار' },
-    { key: 'bored', fa: 'بی‌حوصله' },
+    { key: 'confident', label: 'Confident' },
+    { key: 'disciplined', label: 'Disciplined' },
+    { key: 'anxious', label: 'Anxious' },
+    { key: 'fearful', label: 'Fearful' },
+    { key: 'greedy', label: 'Greedy' },
+    { key: 'bored', label: 'Bored' },
 ];
 
 /**
@@ -157,7 +157,7 @@ export default function JournalScreen({ navigation }) {
                 setMonth(null);
             }
         } catch (e: any) {
-            toast(e?.response?.data?.message || 'ژورنال بارگیری نشد', 'error');
+            toast(e?.response?.data?.message || 'Could not load the journal', 'error');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -178,7 +178,7 @@ export default function JournalScreen({ navigation }) {
             const res = await api(`/api/v1/journal/day?date=${isoDay}&tz=${tz}&source=${month?.source ?? 'manual'}`);
             if (res.data?.success) setDay(res.data.data);
         } catch (e: any) {
-            toast(e?.response?.data?.message || 'روز بارگیری نشد', 'error');
+            toast(e?.response?.data?.message || 'Could not load that day', 'error');
         } finally {
             setDayLoading(false);
         }
@@ -194,9 +194,9 @@ export default function JournalScreen({ navigation }) {
                     ? { ...t, note: { note: draftNote, emotion: draftEmotion } } : t),
             }));
             setEditing(null);
-            toast('یادداشت ذخیره شد', 'success');
+            toast('Note saved', 'success');
         } catch (e: any) {
-            toast(e?.response?.data?.message || 'ذخیره نشد', 'error');
+            toast(e?.response?.data?.message || 'Could not save', 'error');
         } finally {
             setSaving(false);
         }
@@ -222,7 +222,7 @@ export default function JournalScreen({ navigation }) {
                 const res = await api(`/api/v1/journal/card?${q.toString()}`);
                 if (alive && res.data?.success) setCard(res.data.data);
             } catch (e: any) {
-                if (alive) toast(e?.response?.data?.message || 'کارت ساخته نشد', 'error');
+                if (alive) toast(e?.response?.data?.message || 'Could not build the card', 'error');
             } finally {
                 if (alive) setCardLoading(false);
             }
@@ -280,16 +280,16 @@ export default function JournalScreen({ navigation }) {
 
         if (download) {
             const perm = await MediaLibrary.requestPermissionsAsync();
-            if (!perm?.granted) { toast('برای ذخیره در گالری اجازه لازم است', 'error'); return true; }
+            if (!perm?.granted) { toast('Saving to your photos needs permission', 'error'); return true; }
             await MediaLibrary.saveToLibraryAsync(uri);
-            toast('تصویر در گالری ذخیره شد', 'success');
+            toast('Image saved to your photos', 'success');
             return true;
         }
 
         if (!(await Sharing.isAvailableAsync())) return false;
         await Sharing.shareAsync(uri, {
             mimeType: 'image/png',
-            dialogTitle: 'اشتراک‌گذاری کارت ژورنال',
+            dialogTitle: 'Share your journal card',
             UTI: 'public.png',
         });
         return true;
@@ -304,7 +304,7 @@ export default function JournalScreen({ navigation }) {
                 // No capture module in this binary: send the sentence the
                 // image would have carried, and say why it is not a picture.
                 await RNShare.share({ message: `${card.alt}\n\ntermax.app` });
-                toast('این نسخه‌ی اپ فقط متن را می‌فرستد؛ برای تصویر، اپ را به‌روز کنید', 'info');
+                toast('This build can only share text — update the app for images', 'info');
                 return;
             }
             const blob = await toPngBlob(card.svg, card.width, card.height);
@@ -322,10 +322,10 @@ export default function JournalScreen({ navigation }) {
             a.click();
             a.remove();
             setTimeout(() => URL.revokeObjectURL(href), 4000);
-            toast('تصویر ذخیره شد', 'success');
+            toast('Image saved', 'success');
         } catch (e: any) {
             // A cancelled share sheet rejects too; that is not an error.
-            if (e?.name !== 'AbortError') toast(e?.message || 'اشتراک‌گذاری انجام نشد', 'error');
+            if (e?.name !== 'AbortError') toast(e?.message || 'Could not share', 'error');
         } finally {
             setBusy(false);
         }
@@ -351,13 +351,13 @@ export default function JournalScreen({ navigation }) {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
                     <ChevronLeft color={colors.text} size={24} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>ژورنال</Text>
+                <Text style={styles.headerTitle}>Journal</Text>
                 <TouchableOpacity
                     onPress={() => setCalendar(c => (c === 'jalali' ? 'gregorian' : 'jalali'))}
                     style={styles.calToggle}
                 >
                     <CalendarDays color={colors.primary} size={14} />
-                    <Text style={styles.calToggleText}>{calendar === 'jalali' ? 'شمسی' : 'میلادی'}</Text>
+                    <Text style={styles.calToggleText}>{calendar === 'jalali' ? 'Jalali' : 'Gregorian'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                     disabled={!month}
@@ -375,7 +375,7 @@ export default function JournalScreen({ navigation }) {
             {loading ? (
                 <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
             ) : !month ? (
-                <View style={styles.center}><Text style={styles.dim}>ژورنال در دسترس نیست.</Text></View>
+                <View style={styles.center}><Text style={styles.dim}>The journal is unavailable.</Text></View>
             ) : (
                 <ScrollView
                     contentContainerStyle={{ padding: 14, paddingBottom: 40 }}
@@ -383,8 +383,9 @@ export default function JournalScreen({ navigation }) {
                 >
                     {/* month navigator */}
                     <View style={styles.monthNav}>
+                        {/* Left-to-right now: the past is on the left. */}
                         <TouchableOpacity onPress={() => loadMonth(month.prev)} style={styles.navBtn}>
-                            <ChevronRight color={colors.text} size={20} />
+                            <ChevronLeft color={colors.text} size={20} />
                         </TouchableOpacity>
                         <View style={{ alignItems: 'center' }}>
                             <Text style={styles.monthLabel}>{month.monthLabel}</Text>
@@ -393,7 +394,7 @@ export default function JournalScreen({ navigation }) {
                             </Text>
                         </View>
                         <TouchableOpacity onPress={() => loadMonth(month.next)} style={styles.navBtn}>
-                            <ChevronLeft color={colors.text} size={20} />
+                            <ChevronRight color={colors.text} size={20} />
                         </TouchableOpacity>
                     </View>
 
@@ -402,18 +403,19 @@ export default function JournalScreen({ navigation }) {
                         <View style={styles.rowBetween}>
                             <View style={styles.rowStart}>
                                 <Flame color={month.streak.current > 0 ? '#F5A623' : colors.textSecondary} size={18} />
-                                <Text style={styles.cardTitle}>روزهای منظم</Text>
+                                <Text style={styles.cardTitle}>Disciplined days</Text>
                             </View>
                             <Text style={[styles.streakBig, { color: month.streak.current > 0 ? '#F5A623' : colors.textSecondary }]}>
                                 {month.streak.current}
                             </Text>
                         </View>
                         <Text style={styles.noteText}>
-                            یک روز «منظم» است اگر هیچ معامله‌اش بدون حد ضرر، انتقامی یا با حجم غیرعادی نبوده باشد — بُرد و باخت در آن نقشی ندارد.
+                            A day counts as disciplined when none of its trades was unstopped, revenge-driven
+                            or oversized. Winning and losing play no part in it.
                         </Text>
                         <Text style={styles.noteText}>
-                            بهترین رکورد شما: {month.streak.best} روز
-                            {month.streak.lastBreakFa?.length ? ` · آخرین چیزی که نظم را شکست: ${month.streak.lastBreakFa.join('، ')}` : ''}
+                            Your best run: {month.streak.best} days
+                            {month.streak.lastBreak?.length ? ` · last thing that broke it: ${month.streak.lastBreak.join(', ')}` : ''}
                         </Text>
                     </GlassView>
 
@@ -449,11 +451,11 @@ export default function JournalScreen({ navigation }) {
                         </View>
                         <View style={styles.legendRow}>
                             <View style={[styles.legendSwatch, { backgroundColor: 'rgba(8,153,129,0.55)' }]} />
-                            <Text style={styles.legendText}>روز سودده</Text>
+                            <Text style={styles.legendText}>Green day</Text>
                             <View style={[styles.legendSwatch, { backgroundColor: 'rgba(242,54,69,0.55)' }]} />
-                            <Text style={styles.legendText}>روز ضررده</Text>
+                            <Text style={styles.legendText}>Red day</Text>
                             <View style={[styles.legendSwatch, { backgroundColor: 'transparent', borderColor: 'rgba(245,166,35,0.75)', borderWidth: 1.4 }]} />
-                            <Text style={styles.legendText}>روزی که نظم شکست</Text>
+                            <Text style={styles.legendText}>Discipline broke</Text>
                         </View>
                     </GlassView>
 
@@ -461,23 +463,23 @@ export default function JournalScreen({ navigation }) {
                     <GlassView intensity={14} style={styles.card}>
                         <View style={styles.cardHeader}>
                             <BookOpen color={colors.primary} size={18} />
-                            <Text style={styles.cardTitle}>خلاصه‌ی ماه</Text>
+                            <Text style={styles.cardTitle}>Month summary</Text>
                         </View>
                         <View style={styles.factsRow}>
                             <View style={styles.factCell}>
-                                <Text style={styles.factLabel}>معامله</Text>
+                                <Text style={styles.factLabel}>Trades</Text>
                                 <Text style={styles.factValue}>{month.totals.trades}</Text>
                             </View>
                             <View style={styles.factCell}>
-                                <Text style={styles.factLabel}>وین‌ریت</Text>
+                                <Text style={styles.factLabel}>Win rate</Text>
                                 <Text style={styles.factValue}>{month.totals.winRate}%</Text>
                             </View>
                             <View style={styles.factCell}>
-                                <Text style={styles.factLabel}>روز معاملاتی</Text>
+                                <Text style={styles.factLabel}>Trading days</Text>
                                 <Text style={styles.factValue}>{month.totals.tradingDays}</Text>
                             </View>
                             <View style={styles.factCell}>
-                                <Text style={styles.factLabel}>روز منظم</Text>
+                                <Text style={styles.factLabel}>Disciplined</Text>
                                 <Text style={[styles.factValue, { color: colors.success }]}>
                                     {month.totals.cleanDays}/{month.totals.tradingDays}
                                 </Text>
@@ -485,12 +487,12 @@ export default function JournalScreen({ navigation }) {
                         </View>
                         {month.totals.bestDay && (
                             <Text style={styles.noteText}>
-                                سبزترین روز {money(month.totals.bestDay.netProfit)} · قرمزترین روز {money(month.totals.worstDay.netProfit)}
-                                {'  '}({month.totals.greenDays} سبز / {month.totals.redDays} قرمز)
+                                Best day {money(month.totals.bestDay.netProfit)} · worst day {money(month.totals.worstDay.netProfit)}
+                                {'  '}({month.totals.greenDays} green / {month.totals.redDays} red)
                             </Text>
                         )}
                         {month.totals.trades === 0 && (
-                            <Text style={styles.noteText}>در این ماه معامله‌ی بسته‌شده‌ای نبود.</Text>
+                            <Text style={styles.noteText}>No trades were closed this month.</Text>
                         )}
                     </GlassView>
 
@@ -499,21 +501,21 @@ export default function JournalScreen({ navigation }) {
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <Smile color={colors.primary} size={18} />
-                                <Text style={styles.cardTitle}>حال شما و نتیجه‌اش</Text>
+                                <Text style={styles.cardTitle}>Your mood, and what it cost</Text>
                             </View>
                             <Text style={styles.noteText}>
-                                از {month.moods.trades} معامله‌ای که خودتان حالتان را روی آن ثبت کرده‌اید. این تنها
-                                چیزی در ژورنال است که موتور نمی‌تواند اندازه بگیرد — و دقیقاً به همین دلیل فهرستش
-                                بسته است، چون فهرست را می‌شود برش زد. حال‌های زیر ۳ معامله نمایش داده نمی‌شوند.
+                                From the {month.moods.trades} trades you tagged with a mood. It is the one thing in
+                                the journal the engine cannot measure — which is exactly why the list is closed:
+                                a list can be sliced. Moods under 3 trades are not shown.
                             </Text>
                             {month.moods.slices.map((m: any) => (
                                 <View key={m.key} style={styles.habitRow}>
                                     <View style={[styles.tagChip, { borderColor: m.netProfit >= 0 ? colors.success : colors.danger }]}>
                                         <Text style={[styles.tagChipText, { color: m.netProfit >= 0 ? colors.success : colors.danger }]}>
-                                            {m.fa}
+                                            {m.label}
                                         </Text>
                                     </View>
-                                    <Text style={styles.habitMeta}>{m.trades} معامله · {m.winRate}%</Text>
+                                    <Text style={styles.habitMeta}>{m.trades} trades · {m.winRate}%</Text>
                                     <Text style={[styles.habitNet, { color: m.netProfit >= 0 ? colors.success : colors.danger }]}>
                                         {money(m.netProfit)}
                                     </Text>
@@ -527,17 +529,18 @@ export default function JournalScreen({ navigation }) {
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <Tag color={colors.primary} size={18} />
-                                <Text style={styles.cardTitle}>صورت‌حساب عادت‌ها</Text>
+                                <Text style={styles.cardTitle}>What your habits cost</Text>
                             </View>
                             <Text style={styles.noteText}>
-                                هر معامله‌ی {month.habits.days} روز گذشته ({month.habits.trades} معامله) با عادت‌هایی که در آن دیده شد برچسب خورده. گران‌ترین عادت اول آمده. عادت‌های زیر ۳ معامله نمایش داده نمی‌شوند.
+                                Every trade of the last {month.habits.days} days ({month.habits.trades} trades) is tagged with the
+                                habits seen in it. The most expensive one comes first. Habits under 3 trades are not shown.
                             </Text>
                             {month.habits.slices.map((s: any) => (
                                 <View key={s.key} style={styles.habitRow}>
                                     <View style={[styles.tagChip, { borderColor: toneColor(s.tone, colors) }]}>
-                                        <Text style={[styles.tagChipText, { color: toneColor(s.tone, colors) }]}>{s.fa}</Text>
+                                        <Text style={[styles.tagChipText, { color: toneColor(s.tone, colors) }]}>{s.en}</Text>
                                     </View>
-                                    <Text style={styles.habitMeta}>{s.trades} معامله · {s.winRate}%</Text>
+                                    <Text style={styles.habitMeta}>{s.trades} trades · {s.winRate}%</Text>
                                     <Text style={[styles.habitNet, { color: s.netProfit >= 0 ? colors.success : colors.danger }]}>
                                         {money(s.netProfit)}
                                     </Text>
@@ -556,7 +559,7 @@ export default function JournalScreen({ navigation }) {
                             <TouchableOpacity onPress={() => setDayOpen(false)} style={styles.iconBtn}>
                                 <X color={colors.text} size={20} />
                             </TouchableOpacity>
-                            <Text style={styles.sheetTitle}>{day?.labelFa ?? '...'}</Text>
+                            <Text style={styles.sheetTitle}>{day?.label ?? '...'}</Text>
                             <TouchableOpacity
                                 disabled={!day?.trades?.length}
                                 onPress={() => setCardReq({ kind: 'day', date: day.day, source: month?.source ?? 'manual' })}
@@ -573,7 +576,7 @@ export default function JournalScreen({ navigation }) {
                                 {day?.recap && (
                                     <View style={styles.recapBox}>
                                         <Info color={colors.primary} size={15} />
-                                        <Text style={styles.recapText}>{day.recap.fa}</Text>
+                                        <Text style={styles.recapText}>{day.recap.en}</Text>
                                     </View>
                                 )}
 
@@ -600,13 +603,13 @@ export default function JournalScreen({ navigation }) {
                                                 </View>
                                             )}
 
-                                            <Text style={styles.entryText}>{t.entry?.fa}</Text>
+                                            <Text style={styles.entryText}>{t.entry?.en}</Text>
 
                                             {t.tagMeta?.length > 0 && (
                                                 <View style={styles.chipRow}>
                                                     {t.tagMeta.map((m: any) => (
                                                         <View key={m.key} style={[styles.tagChip, { borderColor: toneColor(m.tone, colors) }]}>
-                                                            <Text style={[styles.tagChipText, { color: toneColor(m.tone, colors) }]}>{m.fa}</Text>
+                                                            <Text style={[styles.tagChipText, { color: toneColor(m.tone, colors) }]}>{m.en}</Text>
                                                         </View>
                                                     ))}
                                                 </View>
@@ -622,26 +625,26 @@ export default function JournalScreen({ navigation }) {
                                                                 onPress={() => setDraftEmotion(draftEmotion === e.key ? null : e.key)}
                                                                 style={[styles.emotionChip, draftEmotion === e.key && { borderColor: colors.primary, backgroundColor: 'rgba(41,98,255,0.12)' }]}
                                                             >
-                                                                <Text style={[styles.emotionText, draftEmotion === e.key && { color: colors.primary }]}>{e.fa}</Text>
+                                                                <Text style={[styles.emotionText, draftEmotion === e.key && { color: colors.primary }]}>{e.label}</Text>
                                                             </TouchableOpacity>
                                                         ))}
                                                     </View>
                                                     <TextInput
                                                         value={draftNote}
                                                         onChangeText={setDraftNote}
-                                                        placeholder="چه چیزی دیدی که وارد شدی؟ و اگر دوباره ببینی همین کار را می‌کنی؟"
+                                                        placeholder="What did you see that made you enter? And would you do it again?"
                                                         placeholderTextColor={colors.textSecondary}
                                                         multiline
                                                         style={styles.noteInput}
                                                     />
                                                     <View style={styles.rowEnd}>
                                                         <TouchableOpacity onPress={() => setEditing(null)} style={styles.ghostBtn}>
-                                                            <Text style={styles.ghostBtnText}>انصراف</Text>
+                                                            <Text style={styles.ghostBtnText}>Cancel</Text>
                                                         </TouchableOpacity>
                                                         <TouchableOpacity onPress={() => saveNote(t.id)} disabled={saving} style={styles.primaryBtn}>
                                                             {saving
                                                                 ? <ActivityIndicator size="small" color="#fff" />
-                                                                : <><Check color="#fff" size={14} /><Text style={styles.primaryBtnText}>ذخیره</Text></>}
+                                                                : <><Check color="#fff" size={14} /><Text style={styles.primaryBtnText}>Save</Text></>}
                                                         </TouchableOpacity>
                                                     </View>
                                                 </View>
@@ -652,7 +655,7 @@ export default function JournalScreen({ navigation }) {
                                                 >
                                                     {t.note?.emotion && (
                                                         <Text style={styles.noteEmotion}>
-                                                            حالم: {EMOTIONS.find(e => e.key === t.note.emotion)?.fa ?? t.note.emotion}
+                                                            Felt: {EMOTIONS.find(e => e.key === t.note.emotion)?.label ?? t.note.emotion}
                                                         </Text>
                                                     )}
                                                     {!!t.note?.note && <Text style={styles.noteOwn}>{t.note.note}</Text>}
@@ -663,7 +666,7 @@ export default function JournalScreen({ navigation }) {
                                                     style={styles.addNoteBtn}
                                                 >
                                                     <NotebookPen color={colors.primary} size={14} />
-                                                    <Text style={styles.addNoteText}>یادداشت خودت را اضافه کن</Text>
+                                                    <Text style={styles.addNoteText}>Add your own note</Text>
                                                 </TouchableOpacity>
                                             )}
 
@@ -676,12 +679,12 @@ export default function JournalScreen({ navigation }) {
                                                     style={styles.shareChip}
                                                 >
                                                     <Share2 color={colors.primary} size={13} />
-                                                    <Text style={styles.shareChipText}>ساخت تصویر</Text>
+                                                    <Text style={styles.shareChipText}>Make image</Text>
                                                 </TouchableOpacity>
                                                 <TouchableOpacity
                                                     onPress={() => { setDayOpen(false); navigation.navigate('TradeDna', { positionId: t.id }); }}
                                                 >
-                                                    <Text style={styles.autopsyLinkText}>کالبدشکافی کامل این معامله ↗</Text>
+                                                    <Text style={styles.autopsyLinkText}>Full autopsy of this trade ↗</Text>
                                                 </TouchableOpacity>
                                             </View>
                                         </GlassView>
@@ -689,7 +692,7 @@ export default function JournalScreen({ navigation }) {
                                 })}
 
                                 {day && day.trades?.length === 0 && (
-                                    <Text style={styles.dim}>این روز معامله‌ای بسته نشد.</Text>
+                                    <Text style={styles.dim}>No trades closed on this day.</Text>
                                 )}
                             </ScrollView>
                         )}
@@ -705,7 +708,7 @@ export default function JournalScreen({ navigation }) {
                             <TouchableOpacity onPress={() => setCardReq(null)} style={styles.iconBtn}>
                                 <X color={colors.text} size={20} />
                             </TouchableOpacity>
-                            <Text style={styles.sheetTitle}>تصویر برای اشتراک‌گذاری</Text>
+                            <Text style={styles.sheetTitle}>Image to share</Text>
                             <View style={{ width: 36 }} />
                         </View>
 
@@ -729,7 +732,7 @@ export default function JournalScreen({ navigation }) {
                             )}
 
                             <View style={styles.optRow}>
-                                <Text style={styles.optLabel}>پنهان کردن مبالغ (فقط پیپ و درصد)</Text>
+                                <Text style={styles.optLabel}>Hide amounts (pips and percent only)</Text>
                                 <Switch
                                     value={hideMoney}
                                     onValueChange={setHideMoney}
@@ -738,7 +741,7 @@ export default function JournalScreen({ navigation }) {
                             </View>
                             {cardReq?.kind === 'trade' && (
                                 <View style={styles.optRow}>
-                                    <Text style={styles.optLabel}>یادداشت خودم هم روی تصویر باشد</Text>
+                                    <Text style={styles.optLabel}>Include my own note</Text>
                                     <Switch
                                         value={includeNote}
                                         onValueChange={setIncludeNote}
@@ -747,7 +750,7 @@ export default function JournalScreen({ navigation }) {
                                 </View>
                             )}
                             <View style={styles.optRow}>
-                                <Text style={styles.optLabel}>تم روشن</Text>
+                                <Text style={styles.optLabel}>Light theme</Text>
                                 <Switch
                                     value={cardTheme === 'light'}
                                     onValueChange={(v) => setCardTheme(v ? 'light' : 'dark')}
@@ -756,7 +759,8 @@ export default function JournalScreen({ navigation }) {
                             </View>
 
                             <Text style={styles.privacyNote}>
-                                یادداشت شخصی شما به‌صورت پیش‌فرض روی تصویر نیست. با «پنهان کردن مبالغ» هیچ عددِ دلاری روی کارت نمی‌ماند — حتی داخل جمله‌ها.
+                                Your private note is off the card by default. With "hide amounts" no dollar
+                                figure stays on it — not even inside the sentences.
                             </Text>
 
                             <View style={styles.actionRow}>
@@ -766,7 +770,7 @@ export default function JournalScreen({ navigation }) {
                                     style={[styles.ghostBtn, styles.actionBtn]}
                                 >
                                     <Download color={colors.textSecondary} size={15} />
-                                    <Text style={styles.ghostBtnText}>ذخیره</Text>
+                                    <Text style={styles.ghostBtnText}>Save</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     disabled={!card || busy}
@@ -775,7 +779,7 @@ export default function JournalScreen({ navigation }) {
                                 >
                                     {busy
                                         ? <ActivityIndicator size="small" color="#fff" />
-                                        : <><Share2 color="#fff" size={15} /><Text style={styles.primaryBtnText}>اشتراک‌گذاری</Text></>}
+                                        : <><Share2 color="#fff" size={15} /><Text style={styles.primaryBtnText}>Share</Text></>}
                                 </TouchableOpacity>
                             </View>
                         </ScrollView>
@@ -809,9 +813,7 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     },
     calToggleText: { fontSize: 11.5, color: colors.primary, fontWeight: '700' },
 
-    // row-reverse: in a right-to-left month strip the past sits on the
-    // right, so the "previous month" arrow belongs there too.
-    monthNav: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    monthNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
     navBtn: { padding: 10, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
     monthLabel: { fontSize: 17, fontWeight: '700', color: colors.text },
     monthNet: { fontSize: 14, fontWeight: '700', marginTop: 2 },
@@ -825,12 +827,12 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     rowStart: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     rowEnd: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
-    noteText: { fontSize: 11.5, color: colors.textSecondary, marginTop: 6, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl' },
+    noteText: { fontSize: 11.5, color: colors.textSecondary, marginTop: 6, lineHeight: 18, textAlign: 'left' },
     streakBig: { fontSize: 26, fontWeight: '800' },
 
-    weekHead: { flexDirection: 'row-reverse', marginBottom: 6 },
+    weekHead: { flexDirection: 'row', marginBottom: 6 },
     weekHeadCell: { width: `${100 / 7}%`, textAlign: 'center', fontSize: 11, color: colors.textSecondary, fontWeight: '700' },
-    grid: { flexDirection: 'row-reverse', flexWrap: 'wrap' },
+    grid: { flexDirection: 'row', flexWrap: 'wrap' },
     cellWrap: { width: `${100 / 7}%`, padding: 2 },
     cell: {
         aspectRatio: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
@@ -839,25 +841,25 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     cellToday: { borderColor: colors.primary, borderWidth: 1.6 },
     cellDay: { fontSize: 12, fontWeight: '700', color: colors.text },
     cellNet: { fontSize: 8.5, fontWeight: '700', marginTop: 1 },
-    legendRow: { flexDirection: 'row-reverse', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 10 },
+    legendRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 10 },
     legendSwatch: { width: 11, height: 11, borderRadius: 3, marginLeft: 4 },
     legendText: { fontSize: 10, color: colors.textSecondary, marginLeft: 8 },
 
-    factsRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', marginTop: 4 },
+    factsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
     factCell: { alignItems: 'center', flex: 1 },
     factLabel: { fontSize: 10.5, color: colors.textSecondary },
     factValue: { fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 },
 
     habitRow: {
-        flexDirection: 'row-reverse', alignItems: 'center', paddingVertical: 8,
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, marginTop: 6,
     },
-    habitMeta: { flex: 1, fontSize: 11, color: colors.textSecondary, marginHorizontal: 8, textAlign: 'right' },
+    habitMeta: { flex: 1, fontSize: 11, color: colors.textSecondary, marginHorizontal: 8, textAlign: 'left' },
     habitNet: { fontSize: 12.5, fontWeight: '700' },
 
     tagChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1 },
     tagChipText: { fontSize: 10.5, fontWeight: '700' },
-    chipRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
 
     modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
     sheet: {
@@ -870,11 +872,11 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     },
     sheetTitle: { flex: 1, fontSize: 15.5, fontWeight: '700', color: colors.text, textAlign: 'center' },
     recapBox: {
-        flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 12,
+        flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 12,
         backgroundColor: isDark ? 'rgba(41,98,255,0.10)' : 'rgba(37,99,235,0.07)',
         borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(41,98,255,0.35)', marginBottom: 12,
     },
-    recapText: { flex: 1, fontSize: 12.5, color: colors.text, lineHeight: 20, textAlign: 'right', writingDirection: 'rtl' },
+    recapText: { flex: 1, fontSize: 12.5, color: colors.text, lineHeight: 20, textAlign: 'left' },
 
     tradeCard: {
         borderRadius: 14, padding: 12, marginBottom: 10,
@@ -883,14 +885,14 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     tradeTitle: { fontSize: 13.5, fontWeight: '700', color: colors.text },
     tradeNet: { fontSize: 14.5, fontWeight: '800' },
     sparkWrap: { marginTop: 10, marginBottom: 4 },
-    entryText: { fontSize: 12.5, color: colors.text, lineHeight: 21, marginTop: 8, textAlign: 'right', writingDirection: 'rtl' },
+    entryText: { fontSize: 12.5, color: colors.text, lineHeight: 21, marginTop: 8, textAlign: 'left' },
 
     noteEditor: { marginTop: 10 },
     noteInput: {
         marginTop: 8, minHeight: 70, borderRadius: 12, padding: 10, fontSize: 12.5,
         color: colors.text, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
         borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-        textAlign: 'right', writingDirection: 'rtl', textAlignVertical: 'top',
+        textAlign: 'left', textAlignVertical: 'top',
         // On web the default focus ring is a heavy black outline; keep the
         // ring (it is the only focus cue a keyboard user gets) but tint it.
         ...(Platform.OS === 'web' ? { outlineColor: colors.primary, outlineWidth: 1, outlineStyle: 'solid' } : {}),
@@ -905,9 +907,9 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.025)',
         borderLeftWidth: 2, borderLeftColor: colors.primary,
     },
-    noteEmotion: { fontSize: 10.5, color: colors.primary, fontWeight: '700', textAlign: 'right' },
-    noteOwn: { fontSize: 12.5, color: colors.text, marginTop: 4, lineHeight: 20, textAlign: 'right', writingDirection: 'rtl' },
-    addNoteBtn: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginTop: 10 },
+    noteEmotion: { fontSize: 10.5, color: colors.primary, fontWeight: '700', textAlign: 'left' },
+    noteOwn: { fontSize: 12.5, color: colors.text, marginTop: 4, lineHeight: 20, textAlign: 'left' },
+    addNoteBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
     addNoteText: { fontSize: 11.5, color: colors.primary, fontWeight: '700' },
 
     primaryBtn: {
@@ -920,11 +922,11 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     autopsyLink: { marginTop: 10, alignItems: 'flex-end' },
     autopsyLinkText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
     cardFooterRow: {
-        flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         marginTop: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
     },
     shareChip: {
-        flexDirection: 'row-reverse', alignItems: 'center', gap: 5,
+        flexDirection: 'row', alignItems: 'center', gap: 5,
         paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
         borderWidth: StyleSheet.hairlineWidth, borderColor: colors.primary,
     },
@@ -947,17 +949,17 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         width: CAPTURE_W, height: CAPTURE_H,
     },
     optRow: {
-        flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
     },
-    optLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'right', writingDirection: 'rtl' },
+    optLabel: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'left' },
     privacyNote: {
         fontSize: 11, color: colors.textSecondary, marginTop: 12, lineHeight: 18,
-        textAlign: 'right', writingDirection: 'rtl',
+        textAlign: 'left',
     },
-    actionRow: { flexDirection: 'row-reverse', gap: 10, marginTop: 16 },
+    actionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
     actionBtn: {
-        flex: 1, flexDirection: 'row-reverse', alignItems: 'center',
+        flex: 1, flexDirection: 'row', alignItems: 'center',
         justifyContent: 'center', gap: 6,
     },
 });

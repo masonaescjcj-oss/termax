@@ -219,7 +219,7 @@ export default function BotsScreen({ navigation }) {
             const res = await api('post', `/api/v1/bots/${botId}/watchdog`, { enabled });
             if (res.data?.success) {
                 setReport((r: any) => r ? { ...r, watchdog: { ...r.watchdog, config: res.data.data.config } } : r);
-                showToast(enabled ? 'نگهبان روشن شد' : 'نگهبان خاموش شد — هیچ سقفی ربات را متوقف نمی‌کند', enabled ? 'success' : 'info');
+                showToast(enabled ? 'Watchdog is on' : 'Watchdog is off — no limit will stop this bot', enabled ? 'success' : 'info');
             }
         } catch (e: any) {
             showToast(e.response?.data?.message || 'Could not change the watchdog', 'error');
@@ -228,7 +228,7 @@ export default function BotsScreen({ navigation }) {
 
     const toggleWatchdog = (botId: string, next: boolean) => {
         if (next) { setWatchdogEnabled(botId, true); return; }
-        const msg = 'نگهبان را خاموش می‌کنید؟ از این پس هیچ سقف ضرری این ربات را متوقف نمی‌کند.';
+        const msg = 'Turn the watchdog off? From now on no loss limit will stop this bot.';
         if (Platform.OS === 'web') {
             if ((window as any).confirm?.(msg)) setWatchdogEnabled(botId, false);
         } else {
@@ -459,7 +459,7 @@ export default function BotsScreen({ navigation }) {
             <ScrollView contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
                 <GlassView intensity={14} style={styles.sectionCard}>
                     <Text style={styles.sectionTitle}>Describe the strategy</Text>
-                    <Text style={styles.noteText}>Persian or English. Example: «روی EUR/USD تایم ۱۵ دقیقه، وقتی RSI از ۳۰ رو به بالا عبور کرد و قیمت بالای EMA200 چهارساعته بود بخر، حد ضرر ۱.۵ برابر ATR، حد سود ۲ برابر ریسک، فقط سشن لندن.»</Text>
+                    <Text style={styles.noteText}>Plain English. Example: "On EUR/USD 15m, buy when RSI crosses above 30 and price is above the 4h EMA200. Stop 1.5x ATR, target 2x the risk, London session only."</Text>
                     <TextInput
                         style={styles.descInput}
                         multiline
@@ -492,7 +492,7 @@ export default function BotsScreen({ navigation }) {
                         <GlassView intensity={14} style={styles.sectionCard}>
                             <Text style={styles.sectionTitle}>{buildResult.spec?.name}</Text>
                             <Text style={styles.noteText}>These rules are rendered from the exact JSON the engine will run:</Text>
-                            <RuleSheet rules={buildResult.rules?.fa} />
+                            <RuleSheet rules={buildResult.rules?.en} />
                         </GlassView>
                         {renderBacktestSummary(buildResult.backtest)}
                         <TouchableOpacity onPress={deployBuild} disabled={deploying}>
@@ -593,7 +593,7 @@ export default function BotsScreen({ navigation }) {
                                             {d.watchdog.config.enabled
                                                 ? <ShieldCheck color={colors.success} size={19} />
                                                 : <ShieldOff color={colors.textSecondary} size={19} />}
-                                            <Text style={styles.sectionTitle}>نگهبان ربات</Text>
+                                            <Text style={styles.sectionTitle}>Bot watchdog</Text>
                                         </View>
                                         <Switch
                                             value={!!d.watchdog.config.enabled}
@@ -608,49 +608,49 @@ export default function BotsScreen({ navigation }) {
                                         <>
                                             <View style={styles.statRow}>
                                                 <StatCell
-                                                    label={`ضرر امروز / سقف ${d.watchdog.config.maxDailyLossPct}٪`}
+                                                    label={`Today's loss / limit ${d.watchdog.config.maxDailyLossPct}%`}
                                                     value={money(d.watchdog.verdict.readings.todayNet)}
                                                     color={d.watchdog.verdict.readings.todayNet < 0 ? colors.danger : colors.success}
                                                 />
                                                 <StatCell
-                                                    label={`ضرر پیاپی / ${d.watchdog.config.maxConsecutiveLosses}`}
+                                                    label={`Losses in a row / ${d.watchdog.config.maxConsecutiveLosses}`}
                                                     value={d.watchdog.verdict.readings.consecutiveLosses}
                                                     color={d.watchdog.verdict.readings.consecutiveLosses >= d.watchdog.config.maxConsecutiveLosses ? colors.danger : undefined}
                                                 />
                                                 <StatCell
-                                                    label={`افت / سقف ${d.watchdog.config.maxDrawdownPct}٪`}
+                                                    label={`Drawdown / limit ${d.watchdog.config.maxDrawdownPct}%`}
                                                     value={`${d.watchdog.verdict.readings.drawdownPct}%`}
                                                     color={d.watchdog.verdict.readings.drawdownPct >= d.watchdog.config.maxDrawdownPct ? colors.danger : undefined}
                                                 />
                                             </View>
                                             {d.watchdog.verdict.readings.edgeRatio !== null && (
                                                 <Text style={styles.checkLine}>
-                                                    {d.watchdog.verdict.readings.edgeRatio >= 0.6 ? '✅' : d.watchdog.verdict.readings.edgeRatio > 0.3 ? '⚠️' : '❌'} لبه: {Math.round(d.watchdog.verdict.readings.edgeRatio * 100)}٪ از انتظار ریاضی شروع باقی مانده
+                                                    {d.watchdog.verdict.readings.edgeRatio >= 0.6 ? '✅' : d.watchdog.verdict.readings.edgeRatio > 0.3 ? '⚠️' : '❌'} Edge: {Math.round(d.watchdog.verdict.readings.edgeRatio * 100)}% of the starting expectancy remains
                                                 </Text>
                                             )}
                                             <Text style={[styles.checkLine, { color: d.watchdog.verdict.tripped ? colors.danger : colors.textSecondary }]}>
-                                                {d.watchdog.verdict.tripped ? '⛔ ' : ''}{d.watchdog.verdict.fa}
+                                                {d.watchdog.verdict.tripped ? '⛔ ' : ''}{d.watchdog.verdict.en}
                                             </Text>
                                             <Text style={styles.noteText}>
                                                 {d.watchdog.config.action === 'PAUSE'
-                                                    ? 'با عبور از هر سقف، ربات خودش متوقف می‌شود؛ پوزیشن باز با حد ضرر خودش می‌ماند.'
-                                                    : 'با عبور از هر سقف فقط هشدار ثبت می‌شود و ربات ادامه می‌دهد.'}
+                                                    ? 'Cross any limit and the bot stops itself; an open position keeps its own stop.'
+                                                    : 'Crossing a limit only records an alert; the bot carries on.'}
                                             </Text>
                                         </>
                                     ) : (
                                         <Text style={[styles.noteText, { color: '#F5A623' }]}>
-                                            نگهبان خاموش است — هیچ سقف ضرر روزانه، ضرر پیاپی یا افت سرمایه‌ای این ربات را متوقف نمی‌کند.
+                                            The watchdog is off — no daily loss, losing streak or drawdown limit will stop this bot.
                                         </Text>
                                     )}
 
                                     {Array.isArray(d.watchdog.events) && d.watchdog.events.length > 0 && (
                                         <View style={{ marginTop: 10 }}>
-                                            <Text style={[styles.sectionTitle, { fontSize: 13 }]}>رویدادها</Text>
+                                            <Text style={[styles.sectionTitle, { fontSize: 13 }]}>Events</Text>
                                             {d.watchdog.events.slice(0, 5).map((ev: any) => (
                                                 <View key={ev.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 6 }}>
                                                     <Siren color={ev.severity === 'ALERT' ? colors.danger : ev.severity === 'WARN' ? '#F5A623' : colors.textSecondary} size={13} />
                                                     <Text style={[styles.checkLine, { flex: 1, textAlign: 'right', writingDirection: 'rtl' }]}>
-                                                        {ev.messageFa}
+                                                        {ev.messageEn}
                                                         <Text style={{ color: colors.textSecondary }}>{'  '}{new Date(ev.createdAt).toLocaleDateString()}</Text>
                                                     </Text>
                                                 </View>
@@ -725,22 +725,24 @@ export default function BotsScreen({ navigation }) {
                 {scanLoading || !scan ? (
                     <>
                         <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />
-                        <Text style={[styles.noteText, { textAlign: 'center' }]}>در حال اجرای قواعد این ربات روی همه‌ی نمادهای هم‌خانواده…</Text>
+                        <Text style={[styles.noteText, { textAlign: 'center' }]}>Running this bot's rules across every related symbol…</Text>
                     </>
                 ) : (
                     <>
                         <GlassView intensity={14} style={styles.sectionCard}>
                             <Text style={styles.sectionTitle}>{scan.bot.name}</Text>
                             <Text style={styles.noteText}>
-                                قواعد ورود این ربات روی {scan.scanned.length} نماد در تایم‌فریم {scan.timeframe} اجرا شد.
-                                فقط کندل‌های بسته‌شده و حداکثر {scan.lookbackBars} کندل اخیر شمرده می‌شود — سقف معامله‌ی روزانه و cooldown هم اعمال نشده، چون سؤال «آیا ستاپ وجود دارد؟» است نه «آیا ربات معامله می‌کرد؟».
+                                This bot's entry rules ran on {scan.scanned.length} symbols at {scan.timeframe}.
+                                Closed candles only, and at most the last {scan.lookbackBars} of them. The daily trade cap
+                                and cooldown are deliberately not applied: the question is whether a setup exists, not
+                                whether the bot would have traded it.
                             </Text>
                         </GlassView>
 
                         {scan.hits.length === 0 ? (
                             <GlassView intensity={14} style={styles.sectionCard}>
-                                <Text style={styles.sectionTitle}>هیچ ستاپ فعالی نیست</Text>
-                                <Text style={styles.noteText}>روی هیچ‌کدام از {scan.scanned.length} نماد اسکن‌شده، شرط ورود در {scan.lookbackBars} کندل اخیر برقرار نشده.</Text>
+                                <Text style={styles.sectionTitle}>No live setups</Text>
+                                <Text style={styles.noteText}>On none of the {scan.scanned.length} symbols scanned did the entry condition hold in the last {scan.lookbackBars} candles.</Text>
                             </GlassView>
                         ) : scan.hits.map((h: any) => (
                             <GlassView key={h.symbol} intensity={14} style={styles.sectionCard}>
@@ -751,7 +753,7 @@ export default function BotsScreen({ navigation }) {
                                     <View style={{ flex: 1, marginLeft: 10 }}>
                                         <Text style={styles.botName}>{h.symbol}</Text>
                                         <Text style={styles.botMeta}>
-                                            {h.barsAgo === 0 ? 'کندل همین حالا بسته شد' : `${h.barsAgo} کندل پیش`} · {new Date(h.barTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                            {h.barsAgo === 0 ? 'candle just closed' : `${h.barsAgo} candles ago`} · {new Date(h.barTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
                                         </Text>
                                     </View>
                                     <TouchableOpacity
@@ -763,17 +765,17 @@ export default function BotsScreen({ navigation }) {
                                     </TouchableOpacity>
                                 </View>
                                 <View style={styles.statRow}>
-                                    <StatCell label="قیمت کندل" value={h.close} />
-                                    <StatCell label="حد ضرر" value={h.stopLoss} color={colors.danger} />
-                                    <StatCell label="حد سود" value={h.takeProfit ?? '—'} color={colors.success} />
+                                    <StatCell label="Candle close" value={h.close} />
+                                    <StatCell label="Stop" value={h.stopLoss} color={colors.danger} />
+                                    <StatCell label="Target" value={h.takeProfit ?? '—'} color={colors.success} />
                                 </View>
-                                {h.spreadPips !== null && <Text style={styles.checkLine}>اسپرد الان: {h.spreadPips.toFixed(1)} پیپ</Text>}
+                                {h.spreadPips !== null && <Text style={styles.checkLine}>Spread now: {h.spreadPips.toFixed(1)} pips</Text>}
                             </GlassView>
                         ))}
 
                         {Object.keys(scan.skipped ?? {}).length > 0 && (
                             <GlassView intensity={14} style={styles.sectionCard}>
-                                <Text style={[styles.sectionTitle, { fontSize: 13 }]}>اسکن‌نشده</Text>
+                                <Text style={[styles.sectionTitle, { fontSize: 13 }]}>Not scanned</Text>
                                 {Object.entries(scan.skipped).slice(0, 8).map(([sym, why]: any) => (
                                     <Text key={sym} style={styles.checkLine}>• {sym}: {String(why)}</Text>
                                 ))}

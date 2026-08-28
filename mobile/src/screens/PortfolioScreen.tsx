@@ -42,10 +42,10 @@ const big = (v: number) => {
     return `${v < 0 ? '-' : ''}$${s}`;
 };
 
-const CCY_FA = {
-    USD: 'دلار', EUR: 'یورو', GBP: 'پوند', JPY: 'یِن', CHF: 'فرانک',
-    AUD: 'دلار استرالیا', CAD: 'دلار کانادا', NZD: 'دلار نیوزیلند',
-    XAU: 'طلا', XAG: 'نقره', BTC: 'بیت‌کوین', ETH: 'اتریوم', USDT: 'تتر',
+const CCY_NAME = {
+    USD: 'US dollar', EUR: 'Euro', GBP: 'Pound', JPY: 'Yen', CHF: 'Franc',
+    AUD: 'Aussie dollar', CAD: 'Canadian dollar', NZD: 'Kiwi dollar',
+    XAU: 'Gold', XAG: 'Silver', BTC: 'Bitcoin', ETH: 'Ether', USDT: 'Tether',
 };
 
 const sevColour = (s: string, colors: any) =>
@@ -67,7 +67,7 @@ export default function PortfolioScreen({ navigation }) {
             const res = await api('/api/v1/insights/portfolio');
             if (res.data?.success) setReport(res.data.data);
         } catch (e: any) {
-            setToastMessage(e?.response?.data?.message || 'ریسک پرتفوی بارگیری نشد');
+            setToastMessage(e?.response?.data?.message || 'Could not load portfolio risk');
             setToastVisible(true);
         } finally {
             setLoading(false);
@@ -86,18 +86,18 @@ export default function PortfolioScreen({ navigation }) {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
                     <ChevronLeft color={colors.text} size={24} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>ریسک پرتفوی</Text>
+                <Text style={styles.headerTitle}>Portfolio risk</Text>
             </View>
 
             {loading ? (
                 <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
             ) : !report ? (
-                <View style={styles.center}><Text style={styles.dim}>در دسترس نیست.</Text></View>
+                <View style={styles.center}><Text style={styles.dim}>Unavailable.</Text></View>
             ) : report.positions === 0 ? (
                 <View style={styles.center}>
                     <PieChart color={colors.textSecondary} size={40} />
                     <Text style={[styles.dim, { marginTop: 12 }]}>
-                        پوزیشن بازی ندارید. این صفحه فقط دربارهٔ چیزی حرف می‌زند که همین حالا باز است.
+                        No open positions. This page only speaks about what is open right now.
                     </Text>
                 </View>
             ) : (
@@ -110,7 +110,7 @@ export default function PortfolioScreen({ navigation }) {
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <ShieldAlert color={colors.primary} size={18} />
-                                <Text style={styles.cardTitle}>این کتاب در واقع چیست</Text>
+                                <Text style={styles.cardTitle}>What this book really is</Text>
                             </View>
                             {report.findings.map((f: any, i: number) => (
                                 <View key={i} style={styles.findingRow}>
@@ -120,7 +120,7 @@ export default function PortfolioScreen({ navigation }) {
                                             ? <AlertTriangle color={'#F5A623'} size={16} />
                                             : <Info color={colors.primary} size={16} />}
                                     <Text style={[styles.findingText, { color: sevColour(f.severity, colors) }]}>
-                                        {f.fa}
+                                        {f.en}
                                     </Text>
                                 </View>
                             ))}
@@ -131,22 +131,23 @@ export default function PortfolioScreen({ navigation }) {
                     <GlassView intensity={14} style={styles.card}>
                         <View style={styles.cardHeader}>
                             <PieChart color={colors.primary} size={18} />
-                            <Text style={styles.cardTitle}>موضع ارزی</Text>
+                            <Text style={styles.cardTitle}>Currency exposure</Text>
                         </View>
                         <Text style={styles.noteText}>
-                            هر پوزیشن دو پا دارد: خرید EUR/USD یعنی خرید یورو و فروش دلار. جمعِ پاها روی همه‌ی
-                            پوزیشن‌ها نشان می‌دهد شرط واقعی شما روی چیست. حجم کتاب: {big(report.exposure.gross)}.
-                            درصدها جمعشان ۱۰۰ نمی‌شود، چون هر پوزیشن در دو ارز شمرده می‌شود.
+                            Every position has two legs: long EUR/USD is long the euro and short the dollar.
+                            Netting the legs across the book shows what you are really betting on. Book size:
+                            {' '}{big(report.exposure.gross)}. The shares do not add up to 100% — each position is
+                            counted in two currencies.
                         </Text>
                         {legs.map((l: any) => (
                             <View key={l.currency} style={styles.legRow}>
                                 <View style={styles.legHead}>
                                     <Text style={styles.legName}>
-                                        {CCY_FA[l.currency] ?? l.currency}
+                                        {CCY_NAME[l.currency] ?? l.currency}
                                         <Text style={styles.legCode}>  {l.currency}</Text>
                                     </Text>
                                     <Text style={[styles.legValue, { color: l.exposure >= 0 ? colors.success : colors.danger }]}>
-                                        {l.exposure >= 0 ? 'خرید ' : 'فروش '}{big(Math.abs(l.exposure))}
+                                        {l.exposure >= 0 ? 'Long ' : 'Short '}{big(Math.abs(l.exposure))}
                                     </Text>
                                 </View>
                                 <View style={styles.barTrack}>
@@ -159,13 +160,13 @@ export default function PortfolioScreen({ navigation }) {
                                         backgroundColor: l.exposure >= 0 ? colors.success : colors.danger,
                                     }]} />
                                 </View>
-                                <Text style={styles.legMeta}>{l.sharePct}٪ از کتاب · {l.symbols.join('، ')}</Text>
+                                <Text style={styles.legMeta}>{l.sharePct}% of the book · {l.symbols.join(', ')}</Text>
                             </View>
                         ))}
                         {report.exposure.skipped?.length > 0 && (
                             <Text style={styles.noteText}>
-                                {report.exposure.skipped.join('، ')}: نرخ تبدیلی برای این‌ها نبود، پس در محاسبه نیامدند
-                                (حذف نشدند — گفته می‌شوند).
+                                {report.exposure.skipped.join(', ')}: no conversion rate for these, so they are
+                                not in the figures above — reported rather than dropped.
                             </Text>
                         )}
                     </GlassView>
@@ -174,15 +175,15 @@ export default function PortfolioScreen({ navigation }) {
                     <GlassView intensity={14} style={styles.card}>
                         <View style={styles.cardHeader}>
                             <Layers color={colors.primary} size={18} />
-                            <Text style={styles.cardTitle}>اگر همه‌ی حد ضررها بخورند</Text>
+                            <Text style={styles.cardTitle}>If every stop is hit</Text>
                         </View>
                         <Text style={[styles.bigNumber, { color: colors.danger }]}>
                             {big(report.risk.ifAllStopsHit)}
                         </Text>
                         {report.risk.unstopped?.length > 0 && (
                             <Text style={[styles.noteText, { color: colors.danger }]}>
-                                {report.risk.unstopped.length} پوزیشن بدون حد ضرر است و ضررش عدد ندارد، پس در این
-                                جمع نیامده. عدد بالا کفِ ریسک است، نه سقفش.
+                                {report.risk.unstopped.length} position(s) have no stop, and a loss with no number
+                                cannot be in this total. The figure above is the floor of the risk, not the ceiling.
                             </Text>
                         )}
                         {report.risk.perPosition?.filter((p: any) => p.risk !== null).map((p: any) => (
@@ -194,7 +195,7 @@ export default function PortfolioScreen({ navigation }) {
                         {report.risk.unstopped?.map((p: any) => (
                             <View key={p.id} style={styles.riskRow}>
                                 <Text style={styles.riskSymbol}>{p.symbol}</Text>
-                                <Text style={[styles.riskValue, { color: colors.danger }]}>بدون حد ضرر</Text>
+                                <Text style={[styles.riskValue, { color: colors.danger }]}>no stop</Text>
                             </View>
                         ))}
                     </GlassView>
@@ -204,17 +205,17 @@ export default function PortfolioScreen({ navigation }) {
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <Link2 color={colors.primary} size={18} />
-                                <Text style={styles.cardTitle}>همبستگی</Text>
+                                <Text style={styles.cardTitle}>Correlation</Text>
                             </View>
                             <Text style={styles.noteText}>
-                                از بازدهی روزانه‌ی کندل‌های ذخیره‌شده، فقط روی روزهایی که هر دو نماد معامله شده‌اند.
-                                این یک برآورد است، پس تعداد روزهایش همیشه کنارش نوشته می‌شود. زیر ۳۰ روز اصلاً
-                                گزارش نمی‌شود.
+                                From daily returns on stored candles, paired only on days both instruments traded.
+                                This is an estimate, so the number of days is always printed beside it. Under 30
+                                paired days nothing is reported at all.
                             </Text>
                             {report.correlations.map((c: any, i: number) => (
                                 <View key={i} style={styles.corrRow}>
                                     <Text style={styles.corrPair}>{c.a} ↔ {c.b}</Text>
-                                    <Text style={styles.corrDays}>{c.days} روز</Text>
+                                    <Text style={styles.corrDays}>{c.days} days</Text>
                                     <Text style={[styles.corrR, {
                                         color: Math.abs(c.r) >= 0.7 ? colors.danger
                                             : Math.abs(c.r) >= 0.4 ? '#F5A623' : colors.textSecondary,
@@ -223,7 +224,7 @@ export default function PortfolioScreen({ navigation }) {
                             ))}
                             {report.clusters?.filter((g: any) => g.length > 1).length > 0 && (
                                 <Text style={styles.noteText}>
-                                    گروه‌های هم‌حرکت: {report.clusters.filter((g: any) => g.length > 1)
+                                    Move together: {report.clusters.filter((g: any) => g.length > 1)
                                         .map((g: any) => g.join('+')).join(' · ')}
                                 </Text>
                             )}
@@ -245,7 +246,7 @@ export default function PortfolioScreen({ navigation }) {
 const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.background },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 34 },
-    dim: { color: colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 21, writingDirection: 'rtl' },
+    dim: { color: colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 21 },
     header: {
         flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 10,
         borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
@@ -257,44 +258,44 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         borderRadius: 16, padding: 14, marginBottom: 12,
         borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     },
-    cardHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, marginBottom: 8 },
-    cardTitle: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'right' },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+    cardTitle: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'left' },
     noteText: {
         fontSize: 11.5, color: colors.textSecondary, marginTop: 8, lineHeight: 19,
-        textAlign: 'right', writingDirection: 'rtl',
+        textAlign: 'left',
     },
     findingRow: {
-        flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8, paddingVertical: 8,
+        flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 8,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
     },
-    findingText: { flex: 1, fontSize: 12.5, lineHeight: 21, textAlign: 'right', writingDirection: 'rtl' },
+    findingText: { flex: 1, fontSize: 12.5, lineHeight: 21, textAlign: 'left' },
 
     legRow: { marginTop: 12 },
-    legHead: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
-    legName: { fontSize: 13, fontWeight: '700', color: colors.text, textAlign: 'right' },
+    legHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    legName: { fontSize: 13, fontWeight: '700', color: colors.text, textAlign: 'left' },
     legCode: { fontSize: 10.5, color: colors.textSecondary, fontWeight: '400' },
     legValue: { fontSize: 12.5, fontWeight: '700' },
     barTrack: {
         height: 8, borderRadius: 4, marginTop: 6, overflow: 'hidden',
         backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
-        flexDirection: 'row-reverse',
+        flexDirection: 'row',
     },
     barFill: { height: 8, borderRadius: 4 },
-    legMeta: { fontSize: 10.5, color: colors.textSecondary, marginTop: 4, textAlign: 'right', writingDirection: 'rtl' },
+    legMeta: { fontSize: 10.5, color: colors.textSecondary, marginTop: 4, textAlign: 'left' },
 
     bigNumber: { fontSize: 30, fontWeight: '800', textAlign: 'center', marginVertical: 6 },
     riskRow: {
-        flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingVertical: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, marginTop: 6,
     },
     riskSymbol: { fontSize: 12.5, color: colors.text, fontWeight: '600' },
     riskValue: { fontSize: 12.5, color: colors.textSecondary, fontWeight: '700' },
 
     corrRow: {
-        flexDirection: 'row-reverse', alignItems: 'center', paddingVertical: 7,
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 7,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, marginTop: 6,
     },
-    corrPair: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'right' },
+    corrPair: { flex: 1, fontSize: 12.5, color: colors.text, textAlign: 'left' },
     corrDays: { fontSize: 10.5, color: colors.textSecondary, marginHorizontal: 8 },
     corrR: { fontSize: 13.5, fontWeight: '800' },
 });

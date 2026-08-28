@@ -13,7 +13,7 @@
 
 import { Response } from 'express';
 import Position from '../models/Position';
-import TradeNote, { EMOTIONS, EMOTION_FA, Emotion } from '../models/TradeNote';
+import TradeNote, { EMOTIONS, EMOTION_LABELS, Emotion } from '../models/TradeNote';
 import { AuthRequest } from '../middleware/auth';
 import { classifyContext, JournalTags } from '../services/insights/journal';
 import {
@@ -22,7 +22,7 @@ import {
 } from '../services/insights/journalEntry';
 import {
     buildMonth, computeStreak, sliceByTag, sliceByEmotion, localDayKey, JournalRow,
-    dayLabelFa, jalaliMonthOf,
+    dayLabel, jalaliMonthOf,
 } from '../services/insights/journalCalendar';
 import { runAutopsy } from '../services/insights/autopsy';
 import { buildShareCard, CardOptions } from '../services/insights/shareCard';
@@ -123,7 +123,7 @@ const num = (v: any, dflt: number) => {
  */
 export const getJournalMonth = async (req: AuthRequest, res: Response) => {
     try {
-        const calendar = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+        const calendar = req.query.calendar === 'jalali' ? 'jalali' : 'gregorian';
         const source = (['manual', 'bot', 'all'].includes(String(req.query.source))
             ? String(req.query.source) : 'manual') as 'manual' | 'bot' | 'all';
         // The client sends -new Date().getTimezoneOffset(): +210 for Tehran.
@@ -156,7 +156,7 @@ export const getJournalMonth = async (req: AuthRequest, res: Response) => {
             const tagged = recent
                 .map(r => ({ emotion: notes.get(r.id)?.emotion ?? null, netProfit: r.netProfit }))
                 .filter(r => !!r.emotion);
-            moods = { trades: tagged.length, slices: sliceByEmotion(tagged, EMOTION_FA) };
+            moods = { trades: tagged.length, slices: sliceByEmotion(tagged, EMOTION_LABELS) };
         } catch (e: any) {
             console.warn('[Journal] mood slicing failed:', e.message);
         }
@@ -259,7 +259,7 @@ async function buildDay(userId: string, date: string, tz: number, source: 'manua
 
     return {
         day: date,
-        labelFa: dayLabelFa(date),
+        label: dayLabel(date),
         recap: renderDayRecap(trades.map(t => ({
             netProfit: t.netProfit, symbol: t.symbol, side: t.side, tags: t.tags,
         }))),
@@ -345,7 +345,7 @@ export const getJournalCard = async (req: AuthRequest, res: Response) => {
         };
 
         if (kind === 'month') {
-            const calendar = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+            const calendar = req.query.calendar === 'jalali' ? 'jalali' : 'gregorian';
             const rows = (await journalTrades(req.user!.id, source)).map(toRow);
             const today = localDayKey(Date.now(), tz);
             const fallback = calendar === 'jalali'
@@ -389,11 +389,11 @@ export const getJournalCard = async (req: AuthRequest, res: Response) => {
                 kind: 'trade',
                 symbol: t.symbol, side: t.side, volume: t.volume,
                 netProfit: t.netProfit, pips: t.pips,
-                entryFa: t.entry.fa,
-                labelFa: day.labelFa,
+                entry: t.entry.en,
+                label: day.label,
                 tags: t.tagMeta.map(m => ({ fa: m.fa, tone: m.tone })),
                 spark: t.spark,
-                noteFa: t.note?.note ?? null,
+                note: t.note?.note ?? null,
             }, options);
             return res.status(200).json({ success: true, data: card });
         }
@@ -404,12 +404,12 @@ export const getJournalCard = async (req: AuthRequest, res: Response) => {
 
         const card = buildShareCard({
             kind: 'day',
-            labelFa: day.labelFa,
+            label: day.label,
             netProfit: Number(day.trades.reduce((s, t) => s + t.netProfit, 0).toFixed(2)),
             trades: day.trades.length,
             wins: day.trades.filter(t => t.netProfit > 0).length,
             pips: Number(day.trades.reduce((s, t) => s + t.pips, 0).toFixed(1)),
-            recapFa: day.recap.fa,
+            recap: day.recap.en,
             // Only the habits that showed up more than once that day: a
             // single tag on a single trade is not the day's story.
             tags: dedupeTags(day.trades.flatMap(t => t.tagMeta)),

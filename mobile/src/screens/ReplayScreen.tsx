@@ -251,7 +251,7 @@ export default function ReplayScreen({ navigation, route }) {
                     <TouchableOpacity style={styles.whyHead} onPress={() => setWhyOpen(o => !o)}>
                         <GraduationCap color={colors.primary} size={16} />
                         <Text style={styles.whyTitle}>
-                            {lesson ? lesson.headlineFa : 'برای این کندل توضیحی نیست'}
+                            {lesson ? lesson.headline : 'No explanation for this candle'}
                         </Text>
                         {whyOpen ? <ChevronDown color={colors.textSecondary} size={16} />
                                  : <ChevronUp color={colors.textSecondary} size={16} />}
@@ -259,9 +259,9 @@ export default function ReplayScreen({ navigation, route }) {
 
                     {whyOpen && lesson && lesson.lines?.length > 0 && (
                         <View style={styles.whyBody}>
-                            <Text style={styles.whySubtitle}>{lesson.titleFa}</Text>
+                            <Text style={styles.whySubtitle}>{lesson.title}</Text>
                             {lesson.lines.map((l: any, i: number) => (
-                                <View key={i} style={[styles.whyLine, { paddingRight: 4 + l.depth * 16 }]}>
+                                <View key={i} style={[styles.whyLine, { paddingLeft: 4 + l.depth * 16 }]}>
                                     <Text style={[styles.whyMark, {
                                         color: l.passed ? colors.success : colors.danger,
                                     }]}>{l.group ? (l.passed ? '▾' : '▾') : (l.passed ? '✓' : '✗')}</Text>
@@ -275,7 +275,7 @@ export default function ReplayScreen({ navigation, route }) {
                     )}
                     {whyOpen && lesson && !lesson.lines?.length && (
                         <Text style={styles.whyNote}>
-                            هیچ شرطی سنجیده نشد — به همین دلیل خطی برای نمایش نیست.
+                            No condition was tested, so there is no line to show.
                         </Text>
                     )}
                 </GlassView>
@@ -331,23 +331,23 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
         marginHorizontal: 12, marginBottom: 8, borderRadius: 14, padding: 10,
         borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     },
-    whyHead: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+    whyHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     whyTitle: {
         flex: 1, fontSize: 12, fontWeight: '700', color: colors.text,
-        textAlign: 'right', writingDirection: 'rtl',
+        textAlign: 'left',
     },
     whyBody: { marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 8 },
     whySubtitle: {
         fontSize: 10.5, color: colors.primary, fontWeight: '700', marginBottom: 6,
-        textAlign: 'right', writingDirection: 'rtl',
+        textAlign: 'left',
     },
-    whyLine: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 6, paddingVertical: 2 },
+    whyLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingVertical: 2 },
     whyMark: { fontSize: 12, fontWeight: '800', width: 14, textAlign: 'center' },
-    whyText: { flex: 1, fontSize: 11.5, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl' },
+    whyText: { flex: 1, fontSize: 11.5, lineHeight: 18, textAlign: 'left' },
     whyGroupText: { fontWeight: '700' },
     whyNote: {
         fontSize: 10.5, color: colors.textSecondary, marginTop: 8,
-        textAlign: 'right', writingDirection: 'rtl',
+        textAlign: 'left',
     },
 
     safeArea: { flex: 1, backgroundColor: colors.background },

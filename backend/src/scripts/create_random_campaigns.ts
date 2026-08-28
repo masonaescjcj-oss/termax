@@ -11,8 +11,8 @@ const createRandomCampaigns = async () => {
         
         const randomCampaigns = [
             {
-                title: 'چالش معامله‌گر طلایی (Golden Trader)',
-                description: 'با ثبت ۵ برد متوالی در معاملات طلا و جفت‌ارزها، نشان شجاعت و آواتار متحرک قلب را دریافت کنید.',
+                title: 'Golden Trader challenge',
+                description: 'Demo campaign content',
                 rewardLottieKey: 'nft_heart',
                 accentColor: '#F59E0B',
                 maxParticipants: 50,
@@ -20,30 +20,30 @@ const createRandomCampaigns = async () => {
                 tasks: [
                     {
                         taskId: 'task_gold_broker',
-                        title: 'اتصال حساب معاملاتی برای ترید طلا',
-                        description: 'یک حساب دمو یا واقعی متصل کنید تا تریدهای شما ثبت شوند.',
+                        title: 'Connect a trading account for gold',
+                        description: 'Demo campaign content',
                         taskType: 'CONNECT_BROKER',
                         config: {}
                     },
                     {
                         taskId: 'task_gold_streak',
-                        title: 'رشته برد ۵ تایی در معاملات',
-                        description: '۵ معامله متوالی سودده ثبت کنید تا پایداری خود را اثبات کنید.',
+                        title: 'Demo campaign content',
+                        description: 'Demo campaign content',
                         taskType: 'WIN_STREAK',
                         config: { minStreak: 5 }
                     },
                     {
                         taskId: 'task_gold_link',
-                        title: 'عضویت در آکادمی ترید فیروزه‌ای',
-                        description: 'از کانال آموزشی ما دیدن کنید و نکات تحلیل طلا را بخوانید.',
+                        title: 'Demo campaign content',
+                        description: 'Demo campaign content',
                         taskType: 'VISIT_LINK',
                         config: { url: 'https://t.me/trade_app_education' }
                     }
                 ]
             },
             {
-                title: 'چالش رشد کهکشانی (Galactic Growth)',
-                description: 'موجودی حساب دمو خود را ۳ برابر کنید و یکی از تریدرهای برتری باشید که آواتار متحرک جشن را از آن خود می‌کنند.',
+                title: 'Demo campaign content',
+                description: 'Demo campaign content',
                 rewardLottieKey: 'nft_party',
                 accentColor: '#10B981',
                 maxParticipants: 100,
@@ -51,15 +51,15 @@ const createRandomCampaigns = async () => {
                 tasks: [
                     {
                         taskId: 'task_galaxy_multiply',
-                        title: 'رشد ۳ برابری موجودی حساب دمو',
-                        description: 'موجودی اولیه ۱,۰۰۰ دلاری دمو خود را به ۳,۰۰۰ دلار برسانید.',
+                        title: 'Demo campaign content',
+                        description: 'Demo campaign content',
                         taskType: 'BALANCE_MULTIPLY',
                         config: { multiplier: 3, initialBalance: 1000 }
                     },
                     {
                         taskId: 'task_galaxy_refer',
-                        title: 'دعوت از ۳ هم‌تیمی معاملاتی',
-                        description: '۳ نفر از دوستان خود را دعوت کنید تا آن‌ها هم در چالش شرکت کنند.',
+                        title: 'Demo campaign content',
+                        description: 'Demo campaign content',
                         taskType: 'REFERRAL',
                         config: { minReferrals: 3 }
                     }

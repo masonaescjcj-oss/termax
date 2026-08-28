@@ -133,7 +133,7 @@ export default function AiStudioScreen({ navigation }) {
         setImporting(true);
         try {
             let parsed: any = null;
-            try { parsed = JSON.parse(importText); } catch { throw new Error('این متن JSON معتبر نیست'); }
+            try { parsed = JSON.parse(importText); } catch { throw new Error('That text is not valid JSON'); }
             const isIndicator = parsed?.format === 'termax-indicator' || (parsed?.expr && !parsed?.spec && !parsed?.entry);
             const path = isIndicator ? '/api/v1/indicators/import' : '/api/v1/bots/import';
             const res = await api('post', path, { payload: parsed });
@@ -304,7 +304,7 @@ export default function AiStudioScreen({ navigation }) {
                             <View style={{ flex: 1 }} />
                             <TouchableOpacity onPress={() => setImportOpen(false)}><X color={colors.textSecondary} size={20} /></TouchableOpacity>
                         </View>
-                        <Text style={styles.itemMeta}>محتوای فایل .termax-bot.json یا .termax-indicator.json را اینجا paste کنید. قبل از ساخت، با همان اعتبارسنج سرور بررسی می‌شود.</Text>
+                        <Text style={styles.itemMeta}>Paste the contents of a .termax-bot.json or .termax-indicator.json file here. It is checked against the same server validator before anything is created.</Text>
                         <TextInput
                             style={styles.importInput}
                             multiline

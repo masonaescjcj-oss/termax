@@ -79,7 +79,7 @@ const OP_EN: Record<string, string> = {
 };
 
 /** One leaf as a sentence with its arithmetic shown. */
-export function renderLeaf(leaf: TraceLeaf, lang: Lang = 'fa'): string {
+export function renderLeaf(leaf: TraceLeaf, lang: Lang = 'en'): string {
     const fa = lang === 'fa';
     const L = `${leaf.left.label} = ${num(leaf.left.value)}`;
     const R = leaf.right.label === String(leaf.right.value)
@@ -131,7 +131,7 @@ export interface RenderedLine {
  * these" — a condition that failed inside an `any` is not a reason the
  * trade was skipped, and hiding the structure would imply it was.
  */
-export function renderTrace(node: TraceNode | undefined, lang: Lang = 'fa', depth = 0): RenderedLine[] {
+export function renderTrace(node: TraceNode | undefined, lang: Lang = 'en', depth = 0): RenderedLine[] {
     if (!node) return [];
     const fa = lang === 'fa';
 
@@ -162,6 +162,18 @@ const OUTCOME_FA: Record<BarTrace['outcome'], string> = {
     EXIT_TIME_STOP: 'خروج با حد زمان',
     WAIT: 'صبر',
 };
+const OUTCOME_EN: Record<BarTrace['outcome'], string> = {
+    ENTER_LONG: 'Entered long',
+    ENTER_SHORT: 'Entered short',
+    EXIT_SIGNAL: 'Exited on the signal',
+    EXIT_TIME_STOP: 'Exited on the time stop',
+    WAIT: 'Waited',
+};
+const BLOCK_EN: Record<string, string> = {
+    filter: 'a filter blocked it (session, hours or spread)',
+    cooldown: 'the cooldown after the previous trade',
+    maxTradesPerDay: "today's trade limit was already reached",
+};
 const BLOCK_FA: Record<string, string> = {
     filter: 'فیلترها اجازه ندادند (سشن، ساعت یا اسپرد)',
     cooldown: 'دوره‌ی استراحت بعد از معامله‌ی قبل',
@@ -175,12 +187,25 @@ const BLOCK_FA: Record<string, string> = {
  * saying "the rules did not fire" would be a lie — the rules were not
  * asked. That distinction is the thing a learner most needs.
  */
-export function traceHeadline(trace: BarTrace, lang: Lang = 'fa'): string {
+export function traceHeadline(trace: BarTrace, lang: Lang = 'en'): string {
     const fa = lang === 'fa';
     if (!fa) {
-        if (trace.blockedBy) return `Not tested — ${trace.blockedBy}`;
-        if (trace.inPosition) return trace.outcome === 'WAIT' ? 'In a position, holding' : `In a position — ${trace.outcome}`;
-        return trace.outcome === 'WAIT' ? 'Flat, no entry condition met' : trace.outcome;
+        if (trace.blockedBy) {
+            return `This candle was never checked — ${BLOCK_EN[trace.blockedBy] ?? trace.blockedBy}`;
+        }
+        if (trace.inPosition) {
+            return trace.outcome === 'WAIT'
+                ? 'In a position; no exit condition was met, so it was held'
+                : OUTCOME_EN[trace.outcome];
+        }
+        if (trace.outcome === 'WAIT') {
+            return trace.long?.passed && trace.short?.passed
+                // Both sides true is a contradiction the engine refuses to
+                // resolve by guessing; the learner should know that is why.
+                ? 'Both the long and the short condition were true — the engine does not enter a contradiction'
+                : 'Flat; no entry condition was fully met';
+        }
+        return OUTCOME_EN[trace.outcome];
     }
 
     if (trace.blockedBy) {
@@ -203,10 +228,10 @@ export function traceHeadline(trace: BarTrace, lang: Lang = 'fa'): string {
 }
 
 /** Which condition tree the reader should look at first on this bar. */
-export function primaryTree(trace: BarTrace): { node?: TraceNode; titleFa: string } {
-    if (trace.inPosition) return { node: trace.exit, titleFa: 'شرط خروج' };
-    if (trace.outcome === 'ENTER_SHORT') return { node: trace.short, titleFa: 'شرط ورود فروش' };
-    if (trace.outcome === 'ENTER_LONG') return { node: trace.long, titleFa: 'شرط ورود خرید' };
+export function primaryTree(trace: BarTrace): { node?: TraceNode; titleFa: string; title: string } {
+    if (trace.inPosition) return { node: trace.exit, titleFa: 'شرط خروج', title: 'Exit condition' };
+    if (trace.outcome === 'ENTER_SHORT') return { node: trace.short, titleFa: 'شرط ورود فروش', title: 'Short entry condition' };
+    if (trace.outcome === 'ENTER_LONG') return { node: trace.long, titleFa: 'شرط ورود خرید', title: 'Long entry condition' };
     // Flat and waiting: show whichever side got closer to firing, since
     // that is the one worth studying.
     const score = (n?: TraceNode): number => {
@@ -216,8 +241,8 @@ export function primaryTree(trace: BarTrace): { node?: TraceNode; titleFa: strin
         return kids.length ? kids.reduce((a, b) => a + b, 0) / kids.length : 0;
     };
     return score(trace.long) >= score(trace.short)
-        ? { node: trace.long, titleFa: 'شرط ورود خرید' }
-        : { node: trace.short, titleFa: 'شرط ورود فروش' };
+        ? { node: trace.long, titleFa: 'شرط ورود خرید', title: 'Long entry condition' }
+        : { node: trace.short, titleFa: 'شرط ورود فروش', title: 'Short entry condition' };
 }
 
 /** Shape guard for a spec that has anything to explain at all. */

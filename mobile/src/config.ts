@@ -1,16 +1,16 @@
 import { Platform, StatusBar } from 'react-native';
 
 // =====================================================
-// 🔧 تنظیمات اتصال به بک‌اند
+// Backend connection settings
 // =====================================================
-// برای تست روی موبایل واقعی، آدرس IP کامپیوتر خود را اینجا وارد کنید
-// مثال: 'http://192.168.1.100:5000'
+// To test on a real phone, put your computer's LAN IP here.
+// Example: 'http://192.168.1.100:5000'
 //
-// برای تست روی مرورگر یا شبیه‌ساز همان کامپیوتر: 'http://localhost:5000'
+// For a browser or simulator on the same machine: 'http://localhost:5000'
 // =====================================================
 
 // =====================================================
-// 🔧 تنظیمات اتصال به بک‌اند (HTTPS فعال شد)
+// Backend connection settings (HTTPS enabled)
 // =====================================================
 const getBackendUrl = () => {
     const remoteBackendUrl = 'https://45-129-126-98.sslip.io';

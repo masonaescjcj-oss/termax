@@ -162,7 +162,7 @@ export default function AICoachScreen() {
                     detailedError = 'Session expired or invalid. Please log out and log in again from the Profile tab.';
                 } else if (error.response.status === 429 && error.response.data?.paywall) {
                     const u = error.response.data.usage;
-                    detailedError = `سهمیه‌ی امروز شما (${u?.limit ?? ''} پیام) تمام شد. نیمه‌شب UTC تازه می‌شود — یا با پلن PRO سقف بالاتری بگیرید.`;
+                    detailedError = `You have used today's quota (${u?.limit ?? ''} messages). It resets at midnight UTC — or PRO raises the limit.`;
                     setPaywallHit(true);
                 } else {
                     detailedError = `Server Error (${error.response.status}): ${error.response.data?.error || error.response.data?.message || 'Internal Server Error'}`;
@@ -211,7 +211,7 @@ export default function AICoachScreen() {
             style={{ marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(245,166,35,0.14)', borderWidth: 1, borderColor: 'rgba(245,166,35,0.45)' }}
         >
             <Text style={{ color: '#F5A623', fontSize: 12.5, fontWeight: '700', textAlign: 'center' }}>
-                سهمیه‌ی امروز تمام شد — دیدن پلن‌ها و سقف‌ها ↗
+                Today's quota is used up — see the plans and limits ↗
             </Text>
         </TouchableOpacity>
     ) : null;

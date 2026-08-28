@@ -2178,7 +2178,7 @@ export default function ChartScreen({ navigation, route }: any) {
               <View style={{ backgroundColor: 'rgba(245,166,35,0.12)', borderColor: 'rgba(245,166,35,0.4)', borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 }}>
                 {preTradeWarnings.map((w: any, i: number) => (
                   <Text key={i} style={{ color: '#F5A623', fontSize: 11.5, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl' }}>
-                    ⚠️ {w.fa || w.en}
+                    ⚠️ {w.en || w.fa}
                   </Text>
                 ))}
               </View>

@@ -159,10 +159,9 @@ function explainWindow(spec: any, candles: any[], timeframe: Timeframe) {
             outcome: trace.outcome,
             inPosition: trace.inPosition,
             blockedBy: trace.blockedBy ?? null,
-            headlineFa: traceHeadline(trace, 'fa'),
-            headlineEn: traceHeadline(trace, 'en'),
-            titleFa: primary.titleFa,
-            lines: renderTrace(primary.node, 'fa'),
+            headline: traceHeadline(trace, 'en'),
+            title: primary.title,
+            lines: renderTrace(primary.node, 'en'),
         });
     }
     return out;

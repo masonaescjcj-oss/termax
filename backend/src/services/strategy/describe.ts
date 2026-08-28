@@ -88,7 +88,7 @@ function describeFilter(f: Filter, lang: Lang): string {
  * The full rule sheet, one sentence per line. Everything the engine will
  * actually do — and nothing it won't.
  */
-export function describeSpec(spec: StrategySpec, lang: Lang = 'fa'): string[] {
+export function describeSpec(spec: StrategySpec, lang: Lang = 'en'): string[] {
     const fa = lang === 'fa';
     const lines: string[] = [];
 

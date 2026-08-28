@@ -379,7 +379,7 @@ check('untagged trades are not a mood', !!mood('null'), false);
 truthy('and the big untagged winner does not inflate any row',
     moods.every(m => m.netProfit !== 500));
 check('the most expensive mood is first', moods[0].key, 'greedy');
-check('labels are Persian', mood('greedy')!.fa, 'طمع‌کار');
+check('the label comes from the table it was given', mood('greedy')!.label, 'طمع‌کار');
 check('no notes, no moods', sliceByEmotion([], LABELS).length, 0);
 check('all untagged, no moods',
     sliceByEmotion([{ emotion: null, netProfit: 10 }], LABELS).length, 0);

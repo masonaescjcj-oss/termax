@@ -152,7 +152,7 @@ const holdIdx = traced.traces.findIndex((t: any, i: number) => t.inPosition && t
 truthy('there was a holding bar', holdIdx >= 0);
 check('a holding bar has no entry trees', !!traced.traces[holdIdx].long, false);
 truthy('and says it is holding',
-    traceHeadline(traced.traces[holdIdx]).includes('نگه داشته شد'));
+    traceHeadline(traced.traces[holdIdx]).includes('no exit condition was met'));
 
 // ── a bar the rules never saw ───────────────────────────────────────
 section('a blocked bar must not be reported as a failed rule');
@@ -169,9 +169,9 @@ const blocked = filtered.lastTrace()!;
 check('the bar is marked blocked', blocked.blockedBy, 'filter');
 check('no entry tree was built', !!blocked.long, false);
 truthy('and the headline says it was never checked',
-    traceHeadline(blocked).includes('اصلاً بررسی نشد'));
-truthy('naming the filters, not the rules',
-    traceHeadline(blocked).includes('فیلترها'));
+    traceHeadline(blocked).includes('never checked'));
+truthy('naming the filter, not the rules',
+    traceHeadline(blocked).includes('a filter blocked it'));
 
 // ── short-circuiting is preserved ───────────────────────────────────
 section('the trace shows what the engine looked at, not more');

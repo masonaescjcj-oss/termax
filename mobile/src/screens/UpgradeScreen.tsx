@@ -73,11 +73,11 @@ export default function UpgradeScreen({ navigation }) {
     const pro = plans?.plans?.PRO;
 
     const ROWS = [
-        { Icon: MessageSquare, labelFa: 'پیام AI در روز', get: (p: any) => p?.aiMessagesPerDay },
-        { Icon: BotIcon, labelFa: 'ربات معاملاتی', get: (p: any) => p?.maxBots },
-        { Icon: Activity, labelFa: 'اندیکاتور سفارشی', get: (p: any) => p?.maxCustomIndicators },
-        { Icon: BarChart3, labelFa: 'بک‌تست ذخیره‌شده', get: (p: any) => p?.maxStoredBacktests },
-        { Icon: Code2, labelFa: 'اندیکاتور با کد جاوااسکریپت', get: (p: any) => (p?.codeIndicators ? '✓' : '—') },
+        { Icon: MessageSquare, label: 'AI messages per day', get: (p: any) => p?.aiMessagesPerDay },
+        { Icon: BotIcon, label: 'Trading bots', get: (p: any) => p?.maxBots },
+        { Icon: Activity, label: 'Custom indicators', get: (p: any) => p?.maxCustomIndicators },
+        { Icon: BarChart3, label: 'Stored backtests', get: (p: any) => p?.maxStoredBacktests },
+        { Icon: Code2, label: 'JavaScript indicators', get: (p: any) => (p?.codeIndicators ? '✓' : '—') },
     ];
 
     const usedPct = usage && usage.limit > 0 ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
@@ -89,7 +89,7 @@ export default function UpgradeScreen({ navigation }) {
                     <ChevronLeft color={colors.text} size={24} />
                 </TouchableOpacity>
                 <Crown color={'#F5A623'} size={19} />
-                <Text style={styles.headerTitle}>پلن‌ها</Text>
+                <Text style={styles.headerTitle}>Plans</Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
@@ -98,9 +98,9 @@ export default function UpgradeScreen({ navigation }) {
                         {usage && (
                             <GlassView intensity={14} style={styles.card}>
                                 <View style={styles.rowBetween}>
-                                    <Text style={styles.cardTitle}>مصرف امروز</Text>
+                                    <Text style={styles.cardTitle}>Today's usage</Text>
                                     <Text style={[styles.usageText, { color: usedPct >= 90 ? colors.danger : colors.text }]}>
-                                        {usage.used} / {usage.limit} پیام
+                                        {usage.used} / {usage.limit} messages
                                     </Text>
                                 </View>
                                 <View style={styles.meterTrack}>
@@ -111,30 +111,30 @@ export default function UpgradeScreen({ navigation }) {
                                 </View>
                                 <Text style={styles.noteText}>
                                     {usage.remaining > 0
-                                        ? `${usage.remaining} پیام باقی مانده — نیمه‌شب UTC صفر می‌شود.`
-                                        : 'سهمیه‌ی امروز تمام شد. نیمه‌شب UTC تازه می‌شود.'}
-                                    {typeof usage.toolCalls === 'number' ? ` (${usage.toolCalls} فراخوانی ابزار)` : ''}
+                                        ? `${usage.remaining} left — resets at midnight UTC.`
+                                        : "Today's quota is used up. It resets at midnight UTC."}
+                                    {typeof usage.toolCalls === 'number' ? ` (${usage.toolCalls} tool calls)` : ''}
                                 </Text>
                             </GlassView>
                         )}
 
                         <GlassView intensity={14} style={styles.card}>
                             <View style={styles.planHead}>
-                                <View style={styles.planCol}><Text style={styles.planColLabel}>قابلیت</Text></View>
+                                <View style={styles.planCol}><Text style={styles.planColLabel}>Feature</Text></View>
                                 <View style={styles.planCol}>
                                     <Text style={[styles.planName, !isPro && { color: colors.primary }]}>FREE</Text>
-                                    {!isPro && <Text style={styles.currentTag}>پلن فعلی</Text>}
+                                    {!isPro && <Text style={styles.currentTag}>Current</Text>}
                                 </View>
                                 <View style={styles.planCol}>
                                     <Text style={[styles.planName, isPro && { color: '#F5A623' }]}>PRO</Text>
-                                    {isPro && <Text style={[styles.currentTag, { color: '#F5A623' }]}>پلن فعلی</Text>}
+                                    {isPro && <Text style={[styles.currentTag, { color: '#F5A623' }]}>Current</Text>}
                                 </View>
                             </View>
                             {ROWS.map((r, i) => (
                                 <View key={i} style={styles.planRow}>
                                     <View style={[styles.planCol, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
                                         <r.Icon color={colors.textSecondary} size={13} />
-                                        <Text style={styles.rowLabel} numberOfLines={2}>{r.labelFa}</Text>
+                                        <Text style={styles.rowLabel} numberOfLines={2}>{r.label}</Text>
                                     </View>
                                     <View style={styles.planCol}><Text style={styles.rowValue}>{String(r.get(free) ?? '—')}</Text></View>
                                     <View style={styles.planCol}><Text style={[styles.rowValue, { color: '#F5A623', fontWeight: '800' }]}>{String(r.get(pro) ?? '—')}</Text></View>
@@ -143,13 +143,13 @@ export default function UpgradeScreen({ navigation }) {
                         </GlassView>
 
                         <GlassView intensity={14} style={styles.card}>
-                            <Text style={styles.cardTitle}>در هر دو پلن</Text>
+                            <Text style={styles.cardTitle}>In both plans</Text>
                             {[
-                                'موتور محاسبات واقعی: اسپرد دوطرفه، کمیسیون، سواپ، مارجین',
-                                'بک‌تست با نمره‌ی صداقت — هیچ عددی بدون بررسی اعتبار',
-                                'دروازه‌ی لایو: فوروارد تست کامل قبل از پول واقعی',
-                                'نگهبان ربات و محافظ ریسک روزانه',
-                                'Trade DNA و کالبدشکافی معامله',
+                                'Real cost engine: two-sided spread, commission, swap, margin',
+                                'Backtests with an honesty grade — no figure without its caveat',
+                                'Live gate: a full forward test before real money',
+                                'Bot watchdog and daily risk guard',
+                                'Trade DNA and per-trade autopsy',
                             ].map((t, i) => (
                                 <View key={i} style={styles.bulletRow}>
                                     <Check color={colors.success} size={14} />
@@ -160,14 +160,15 @@ export default function UpgradeScreen({ navigation }) {
 
                         {!isPro && (
                             <>
-                                <TouchableOpacity onPress={() => showToast('درگاه پرداخت هنوز فعال نشده — به‌محض راه‌اندازی همین دکمه ارتقا می‌دهد', 'info')}>
+                                <TouchableOpacity onPress={() => showToast('The payment gateway is not connected yet — this button will upgrade you as soon as it is', 'info')}>
                                     <LinearGradient colors={['#F5A623', '#D68910']} style={styles.ctaBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                                         <Zap color="#FFF" size={17} />
-                                        <Text style={styles.ctaText}>ارتقا به PRO</Text>
+                                        <Text style={styles.ctaText}>Upgrade to PRO</Text>
                                     </LinearGradient>
                                 </TouchableOpacity>
                                 <Text style={[styles.noteText, { textAlign: 'center' }]}>
-                                    ترمکس ابزار تحلیل و اجراست، نه مشاور سرمایه‌گذاری. هیچ پلنی سود را تضمین نمی‌کند؛ معامله ریسک از دست دادن سرمایه دارد.
+                                    Termax is an analysis and execution tool, not investment advice. No plan guarantees a
+                        profit; trading carries the risk of losing your capital.
                                 </Text>
                             </>
                         )}
@@ -175,9 +176,9 @@ export default function UpgradeScreen({ navigation }) {
                             <GlassView intensity={14} style={[styles.card, { borderColor: 'rgba(245,166,35,0.4)' }]}>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                     <Crown color={'#F5A623'} size={18} />
-                                    <Text style={styles.cardTitle}>پلن PRO فعال است</Text>
+                                    <Text style={styles.cardTitle}>PRO is active</Text>
                                 </View>
-                                <Text style={styles.noteText}>همه‌ی سقف‌ها روی حالت PRO تنظیم شده، از جمله لایه‌ی کد جاوااسکریپت برای اندیکاتورها.</Text>
+                                <Text style={styles.noteText}>Every limit is set to PRO, including the JavaScript indicator tier.</Text>
                             </GlassView>
                         )}
                     </>
@@ -201,17 +202,17 @@ const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
     usageText: { fontSize: 14, fontWeight: '700' },
     meterTrack: { height: 8, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)', marginTop: 10, overflow: 'hidden' },
     meterFill: { height: 8, borderRadius: 4 },
-    noteText: { fontSize: 12, color: colors.textSecondary, lineHeight: 19, marginTop: 8, textAlign: 'right', writingDirection: 'rtl' },
+    noteText: { fontSize: 12, color: colors.textSecondary, lineHeight: 19, marginTop: 8, textAlign: 'left' },
     planHead: { flexDirection: 'row', alignItems: 'flex-end', paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     planRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     planCol: { flex: 1, alignItems: 'center' },
     planColLabel: { fontSize: 11, color: colors.textSecondary },
     planName: { fontSize: 14, fontWeight: '800', color: colors.text },
     currentTag: { fontSize: 9.5, color: colors.primary, marginTop: 2, fontWeight: '700' },
-    rowLabel: { flex: 1, fontSize: 11.5, color: colors.text, textAlign: 'right', writingDirection: 'rtl' },
+    rowLabel: { flex: 1, fontSize: 11.5, color: colors.text, textAlign: 'left' },
     rowValue: { fontSize: 13.5, fontWeight: '700', color: colors.text },
     bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 8 },
-    bulletText: { flex: 1, fontSize: 12.5, color: colors.text, lineHeight: 20, textAlign: 'right', writingDirection: 'rtl' },
+    bulletText: { flex: 1, fontSize: 12.5, color: colors.text, lineHeight: 20, textAlign: 'left' },
     ctaBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: 14, marginBottom: 4 },
     ctaText: { color: '#FFF', fontSize: 16, fontWeight: '800' },
 });

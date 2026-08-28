@@ -51,6 +51,10 @@ export function localDayKey(ts: number, tzOffsetMinutes = 0): string {
     return new Date(ts + tzOffsetMinutes * 60_000).toISOString().slice(0, 10);
 }
 
+const WEEKDAY_EN = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+const MONTH_EN = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+
 const round2 = (n: number) => Number(n.toFixed(2));
 
 export interface MonthView {
@@ -98,7 +102,7 @@ export function buildMonth(
     rows: JournalRow[],
     opts: { calendar?: 'jalali' | 'gregorian'; year: number; month: number; tzOffsetMinutes?: number }
 ): MonthView {
-    const calendar = opts.calendar ?? 'jalali';
+    const calendar = opts.calendar ?? 'gregorian';
     const tz = opts.tzOffsetMinutes ?? 0;
     const keys = monthDayKeys(calendar, opts.year, opts.month);
     const inMonth = new Set(keys);
@@ -118,7 +122,9 @@ export function buildMonth(
         const riskTags = [...new Set(list.flatMap(r => r.tags.filter(t => breaksDiscipline([t]))))];
         return {
             day,
-            label: faDigits(calendar === 'jalali' ? i + 1 : i + 1),
+            // Latin digits by default; Persian ones only for the Jalali
+            // view, where they are what the calendar is for.
+            label: calendar === 'jalali' ? faDigits(i + 1) : String(i + 1),
             trades: list.length,
             wins: list.filter(r => r.netProfit > 0).length,
             netProfit: net,
@@ -150,8 +156,11 @@ export function buildMonth(
         month: opts.month,
         monthLabel: calendar === 'jalali'
             ? `${MONTHS_FA[opts.month - 1]} ${faDigits(opts.year)}`
-            : `${opts.year}-${String(opts.month).padStart(2, '0')}`,
-        weekdayLabels: calendar === 'jalali' ? WEEKDAYS_FA_SHORT : ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
+            : `${MONTH_EN[opts.month - 1]} ${opts.year}`,
+        weekdayLabels: calendar === 'jalali'
+            ? WEEKDAYS_FA_SHORT
+            // Sunday-first, matching the Gregorian firstWeekday below.
+            : ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
         firstWeekday: calendar === 'jalali'
             ? jalaliWeekday(keys[0])
             : new Date(`${keys[0]}T00:00:00Z`).getUTCDay(),
@@ -267,7 +276,7 @@ export function sliceByEmotion(
     rows: Array<{ emotion: string | null; netProfit: number }>,
     labels: Record<string, string>,
     minTrades = 3
-): Array<{ key: string; fa: string; trades: number; wins: number; winRate: number; netProfit: number; expectancy: number }> {
+): Array<{ key: string; label: string; trades: number; wins: number; winRate: number; netProfit: number; expectancy: number }> {
     const map = new Map<string, { trades: number; wins: number; net: number }>();
     for (const r of rows) {
         if (!r.emotion) continue;
@@ -281,7 +290,7 @@ export function sliceByEmotion(
         .filter(([, v]) => v.trades >= minTrades)
         .map(([key, v]) => ({
             key,
-            fa: labels[key] ?? key,
+            label: labels[key] ?? key,
             trades: v.trades,
             wins: v.wins,
             winRate: Number(((v.wins / v.trades) * 100).toFixed(1)),
@@ -291,7 +300,13 @@ export function sliceByEmotion(
         .sort((a, b) => a.netProfit - b.netProfit);
 }
 
-/** '2026-08-24' → '۲ شهریور ۱۴۰۵ (دوشنبه)' */
+/** '2026-08-24' → 'Monday, 24 August 2026' */
+export function dayLabel(isoDay: string): string {
+    const [y, m, d] = isoDay.split('-').map(Number);
+    return `${WEEKDAY_EN[jalaliWeekday(isoDay)]}, ${d} ${MONTH_EN[m - 1]} ${y}`;
+}
+
+/** '2026-08-24' → '۲ شهریور ۱۴۰۵ (دوشنبه)' — kept for the Jalali view. */
 export function dayLabelFa(isoDay: string): string {
     const wd = ['شنبه', 'یک‌شنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'][jalaliWeekday(isoDay)];
     return `${formatJalali(isoDay)} (${wd})`;
