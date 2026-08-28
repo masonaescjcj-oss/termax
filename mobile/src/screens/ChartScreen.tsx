@@ -1539,29 +1539,37 @@ export default function ChartScreen({ navigation, route }: any) {
         const urlSafeSymbol = symbol.replace('/', '-');
         const response = await axios.get(`${BACKEND_URL}/api/v1/market/candles/${urlSafeSymbol}?interval=${selectedInterval.toLowerCase()}&limit=500`);
         if (!response.data || response.data.length === 0) return;
-                const getSnapSeconds = (interval: string) => {
-          if (interval === '1m') return 60;
-          if (interval === '5m') return 300;
-          if (interval === '15m') return 900;
-          if (interval === '30m') return 1800;
-          if (interval === '1h') return 3600;
-          if (interval === '4h') return 14400;
-          if (interval === '1d') return 86400;
-          if (interval === '1w') return 604800;
-          return 3600;
-        };
-        const snapSeconds = getSnapSeconds(selectedInterval);
-
-        const formattedData = response.data.map((item: any) => {
-          const currentUnixTime = Math.floor(new Date(item.timestamp).getTime() / 1000);
-          const snappedTime = currentUnixTime - (currentUnixTime % snapSeconds);
-          return {
-            timestamp: snappedTime * 1000,
-            open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume || 0
-          };
-        }).sort((a: any, b: any) => a.timestamp - b.timestamp);
+        // The server folds the source data into the interval that was
+        // requested and stamps each bar on its bucket boundary, so there is
+        // nothing left to snap here.
+        //
+        // What used to be here was the bug: this code re-bucketed the
+        // response by the selected interval and then kept only the FIRST
+        // bar of each bucket. On 4h — served as 60m data, because no source
+        // offers a 4-hour bar — that discarded three of every four candles
+        // and left the survivors carrying only their first hour's high, low
+        // and close. Wide buckets over a short range collapsed the series
+        // toward a single bar, which is why the chart looked like one line
+        // until the timeframe was changed.
+        const formattedData = response.data
+          .map((item: any) => ({
+            timestamp: new Date(item.timestamp).getTime(),
+            open: item.open, high: item.high, low: item.low, close: item.close,
+            volume: item.volume || 0,
+          }))
+          // A NaN price renders as nothing at all; drop the bar instead.
+          .filter((c: any) => [c.timestamp, c.open, c.high, c.low, c.close].every(Number.isFinite))
+          .sort((a: any, b: any) => a.timestamp - b.timestamp);
 
         const uniqueData = formattedData.filter((item: any, index: number, arr: any[]) => index === 0 || item.timestamp !== arr[index - 1].timestamp);
+
+        const served = response.headers?.['x-candle-interval'];
+        if (served && served !== selectedInterval.toLowerCase()) {
+          // The source had nothing finer than `served` for this symbol, so
+          // that is what is on screen. Saying so beats letting a daily bar
+          // pass for a 15-minute one.
+          console.log(`ChartScreen: ${symbol} ${selectedInterval} not available; showing ${served} data`);
+        }
 
         const messageStr = JSON.stringify({ type: 'historical', data: uniqueData });
         lastHistoricalDataRef.current = uniqueData; // Cache it!

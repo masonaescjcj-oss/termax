@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { aggregateCandles, servedInterval } from '../services/candles/aggregate';
 import axios from 'axios';
 import { supabase } from '../config/supabase';
 import { mapPromotedSymbolToCamel } from '../utils/mapper';
@@ -142,7 +143,14 @@ export const getCandles = async (req: Request, res: Response) => {
                 const result = await yahooFinance.chart(yahooSymbol, queryOptions as any);
 
                 const quotes = (result.quotes as any[]) || [];
-                const validQuotes = quotes.filter(item => item && item.open !== null && item.close !== null);
+                // All four prices, not just open and close: Yahoo returns
+                // nulls for illiquid minutes, and a null high or low
+                // becomes a NaN that draws nothing on the chart — missing
+                // data without the honesty of looking missing.
+                const validQuotes = quotes.filter(item =>
+                    item
+                    && Number.isFinite(item.open) && Number.isFinite(item.high)
+                    && Number.isFinite(item.low) && Number.isFinite(item.close));
                 const limitedResult = validQuotes.slice(-limit);
 
                 candlesToSave = limitedResult.map((item: any) => ({
@@ -203,7 +211,33 @@ export const getCandles = async (req: Request, res: Response) => {
             candlesToSave = mockCandles;
         }
 
-        res.status(200).json(candlesToSave);
+        // Fold to the interval that was actually requested.
+        //
+        // The sources do not offer every interval the app does — Yahoo has
+        // no 4-hour bar, so a 4h request is served 60-minute data. Until
+        // now the client bucketed those itself and kept the FIRST bar of
+        // each bucket, discarding the rest: a quarter of the candles, each
+        // carrying only its first hour's high, low and close. Folding here
+        // means the response always matches what was asked for, and the
+        // client never has to guess what it received.
+        const served = servedInterval(candlesToSave, interval);
+        const folded = aggregateCandles(candlesToSave, served);
+        if (served !== interval) {
+            // Daily bars cannot fill a 15-minute chart; aggregation cannot
+            // invent the detail, so say what the data is instead of drawing
+            // one bar per day on a 15-minute axis.
+            console.log(`[Candles] ${symbol}: asked ${interval}, source data is ${served}`);
+        }
+        // The shape stays a bare array for the existing clients; the served
+        // interval rides along on a header for the ones that care.
+        res.setHeader('X-Candle-Interval', served);
+        res.setHeader('X-Candle-Count', String(folded.length));
+        res.status(200).json(folded.map(c => ({
+            symbol,
+            interval: served,
+            timestamp: c.timestamp,
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+        })));
     } catch (error: any) {
         console.error('getHistoricalCandles Error:', error.message);
         res.status(500).json({ error: 'Failed to fetch market data' });
