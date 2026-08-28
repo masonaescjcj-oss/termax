@@ -15,7 +15,9 @@ import { AuthRequest } from '../middleware/auth';
 import { runBacktest } from '../services/backtest/engine';
 import { backfillRange, coverage } from '../services/candles/backfill';
 import { readBars, readBarsTf } from '../services/candles/store';
-import { TIMEFRAMES, TIMEFRAME_MS, Timeframe } from '../services/strategy/types';
+import { BarContext, BotState, TIMEFRAMES, TIMEFRAME_MS, Timeframe } from '../services/strategy/types';
+import { compileStrategy } from '../services/strategy/interpreter';
+import { hasExplainableRules, primaryTree, renderTrace, traceHeadline } from '../services/strategy/trace';
 
 const MAX_CANDLES = 500;
 const WARMUP_CANDLES = 60;
@@ -23,6 +25,7 @@ const WARMUP_CANDLES = 60;
 export const startReplay = async (req: AuthRequest, res: Response) => {
     try {
         const { botId, days } = req.body ?? {};
+        const learn = req.body?.learn === true || req.body?.learn === 'true';
         let symbol = String(req.body?.symbol ?? '');
         let timeframe = String(req.body?.timeframe ?? '15m') as Timeframe;
         let spec: any = null;
@@ -83,6 +86,20 @@ export const startReplay = async (req: AuthRequest, res: Response) => {
             }
         }
 
+        // ── learn mode ──────────────────────────────────────────────
+        // Per-bar explanations of the bot's decision, rendered here so the
+        // client can reveal one with each candle without another request.
+        // The trace comes from the interpreter's own evaluation pass, so
+        // what the learner reads cannot drift from what the engine did.
+        let lessons: any[] = [];
+        if (learn && spec && hasExplainableRules(spec)) {
+            try {
+                lessons = explainWindow(spec, candles, timeframe);
+            } catch (e: any) {
+                console.warn('[Replay] Explanation failed:', e.message);
+            }
+        }
+
         res.status(200).json({
             success: true,
             data: {
@@ -93,9 +110,60 @@ export const startReplay = async (req: AuthRequest, res: Response) => {
                 candles,
                 botTrades,
                 botTotalPips: Number(botTrades.reduce((s, t) => s + t.pips, 0).toFixed(1)),
+                learn,
+                lessons,
             },
         });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
 };
+
+/**
+ * Replay the window through a traced interpreter and render one lesson
+ * per bar.
+ *
+ * This is a second pass over the same candles rather than a hook into the
+ * backtest, and that is deliberate: the backtest runs on 1-minute bars to
+ * price stops and fills, while the decision the learner is reading was
+ * taken on the spec timeframe. Explaining the 1m pass would show them a
+ * hundred bars of nothing per decision.
+ *
+ * The position model here is intentionally coarse — entry at the close,
+ * exit on a signal — because the lesson is about *why the rules fired*,
+ * not about the fill. The bot's real trades, with real costs, come from
+ * the backtest above and are what the score is compared against.
+ */
+function explainWindow(spec: any, candles: any[], timeframe: Timeframe) {
+    const strat = compileStrategy(spec, { trace: true });
+    let state: BotState = { dayKey: '', tradesToday: 0, barsInPosition: 0, cooldown: 0 } as BotState;
+    let position: any = null;
+    const out: any[] = [];
+
+    for (const bar of candles) {
+        const ctx = { position, spreadPips: 0 } as BarContext;
+        const step = strat.onBar(timeframe, bar, state, ctx);
+        state = step.state;
+
+        if (step.decision.enter) {
+            position = { side: step.decision.enter.side, entryPrice: bar.close, volume: 0.01 };
+        } else if (step.decision.exit) {
+            position = null;
+        }
+
+        const trace = strat.lastTrace();
+        if (!trace) continue;
+        const primary = primaryTree(trace);
+        out.push({
+            time: bar.time,
+            outcome: trace.outcome,
+            inPosition: trace.inPosition,
+            blockedBy: trace.blockedBy ?? null,
+            headlineFa: traceHeadline(trace, 'fa'),
+            headlineEn: traceHeadline(trace, 'en'),
+            titleFa: primary.titleFa,
+            lines: renderTrace(primary.node, 'fa'),
+        });
+    }
+    return out;
+}

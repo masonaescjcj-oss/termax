@@ -14,6 +14,7 @@ import { Text } from '../components/Typography';
 import axios from 'axios';
 import {
     ChevronLeft, Play, Pause, SkipForward, RotateCcw, Swords,
+    GraduationCap, ChevronDown, ChevronUp,
 } from 'lucide-react-native';
 import GlassView from '../components/GlassView';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -88,6 +89,10 @@ export default function ReplayScreen({ navigation, route }) {
     const [myTrades, setMyTrades] = useState(0);
     const [botRevealedPips, setBotRevealedPips] = useState(0);
     const [finished, setFinished] = useState(false);
+    // Learn mode: the bot's reasoning for the bar just revealed. Fetched
+    // with the session, so stepping costs no request.
+    const [learn, setLearn] = useState(true);
+    const [whyOpen, setWhyOpen] = useState(true);
 
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -115,6 +120,7 @@ export default function ReplayScreen({ navigation, route }) {
                 symbol: route?.params?.symbol ?? 'BTC/USDT',
                 timeframe: route?.params?.timeframe ?? '15m',
                 days: 30,
+                learn: true,
             });
             const d = res.data?.data;
             setSession(d);
@@ -139,6 +145,14 @@ export default function ReplayScreen({ navigation, route }) {
 
     const currentCandle = session?.candles?.[cursor - 1];
     const pipSize = pipSizeOf(session?.symbol);
+
+    // The lesson is keyed by bar time rather than index: the explanation
+    // pass skips bars of other timeframes, so the two arrays are not
+    // guaranteed to line up position for position.
+    const lesson = useMemo(() => {
+        if (!learn || !currentCandle || !session?.lessons?.length) return null;
+        return session.lessons.find((l: any) => l.time === currentCandle.time) ?? null;
+    }, [learn, currentCandle, session]);
 
     const step = useCallback(() => {
         if (!session) return;
@@ -231,6 +245,42 @@ export default function ReplayScreen({ navigation, route }) {
             </View>
 
             {/* controls */}
+            {/* ── learn mode: why the bot did what it did on this bar ── */}
+            {session?.botName && learn && !finished && (
+                <GlassView intensity={12} style={styles.whyCard}>
+                    <TouchableOpacity style={styles.whyHead} onPress={() => setWhyOpen(o => !o)}>
+                        <GraduationCap color={colors.primary} size={16} />
+                        <Text style={styles.whyTitle}>
+                            {lesson ? lesson.headlineFa : 'برای این کندل توضیحی نیست'}
+                        </Text>
+                        {whyOpen ? <ChevronDown color={colors.textSecondary} size={16} />
+                                 : <ChevronUp color={colors.textSecondary} size={16} />}
+                    </TouchableOpacity>
+
+                    {whyOpen && lesson && lesson.lines?.length > 0 && (
+                        <View style={styles.whyBody}>
+                            <Text style={styles.whySubtitle}>{lesson.titleFa}</Text>
+                            {lesson.lines.map((l: any, i: number) => (
+                                <View key={i} style={[styles.whyLine, { paddingRight: 4 + l.depth * 16 }]}>
+                                    <Text style={[styles.whyMark, {
+                                        color: l.passed ? colors.success : colors.danger,
+                                    }]}>{l.group ? (l.passed ? '▾' : '▾') : (l.passed ? '✓' : '✗')}</Text>
+                                    <Text style={[styles.whyText, l.group && styles.whyGroupText, {
+                                        color: l.group ? colors.textSecondary
+                                            : l.passed ? colors.text : colors.textSecondary,
+                                    }]}>{l.text}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    )}
+                    {whyOpen && lesson && !lesson.lines?.length && (
+                        <Text style={styles.whyNote}>
+                            هیچ شرطی سنجیده نشد — به همین دلیل خطی برای نمایش نیست.
+                        </Text>
+                    )}
+                </GlassView>
+            )}
+
             {finished ? (
                 <GlassView intensity={16} style={styles.endCard}>
                     <Text style={styles.endTitle}>
@@ -276,6 +326,30 @@ export default function ReplayScreen({ navigation, route }) {
 }
 
 const createStyles = (colors: any, isDark: boolean) => StyleSheet.create({
+    // ── learn mode ──────────────────────────────────────────────────
+    whyCard: {
+        marginHorizontal: 12, marginBottom: 8, borderRadius: 14, padding: 10,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    },
+    whyHead: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+    whyTitle: {
+        flex: 1, fontSize: 12, fontWeight: '700', color: colors.text,
+        textAlign: 'right', writingDirection: 'rtl',
+    },
+    whyBody: { marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 8 },
+    whySubtitle: {
+        fontSize: 10.5, color: colors.primary, fontWeight: '700', marginBottom: 6,
+        textAlign: 'right', writingDirection: 'rtl',
+    },
+    whyLine: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 6, paddingVertical: 2 },
+    whyMark: { fontSize: 12, fontWeight: '800', width: 14, textAlign: 'center' },
+    whyText: { flex: 1, fontSize: 11.5, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl' },
+    whyGroupText: { fontWeight: '700' },
+    whyNote: {
+        fontSize: 10.5, color: colors.textSecondary, marginTop: 8,
+        textAlign: 'right', writingDirection: 'rtl',
+    },
+
     safeArea: { flex: 1, backgroundColor: colors.background },
     header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
     backBtn: { padding: 6 },
