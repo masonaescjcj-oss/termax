@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { Bookmark, LineChart, Cpu, Layers, User, Bot } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import WatchlistScreen from '../screens/WatchlistScreen';
 import ChartScreen from '../screens/ChartScreen';
@@ -32,6 +33,20 @@ const Stack = createNativeStackNavigator();
 
 function BottomTabs() {
     const { colors, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
+
+    // React Navigation adds the bottom inset to the tab bar for you — but
+    // only while you let it choose the height. This bar set `height` and
+    // `paddingBottom` to fixed numbers, which replaced that calculation
+    // outright, so on any device with a gesture bar or a three-button
+    // navigation bar the tabs sat underneath the system navigation and the
+    // icons were half-covered. The inset is added back here.
+    //
+    // Telegram's WebApp draws its own chrome and reports no inset, so it
+    // keeps the compact bar it had.
+    const bottomInset = isTelegram ? 0 : insets.bottom;
+    const barHeight = (isTelegram ? 54 : 60) + bottomInset;
+
     return (
         <Tab.Navigator
             backBehavior="history"
@@ -50,8 +65,8 @@ function BottomTabs() {
                     shadowColor: 'transparent',
                     shadowOffset: { width: 0, height: 0 },
                     shadowRadius: 0,
-                    height: isTelegram ? 54 : 60,
-                    paddingBottom: isTelegram ? 4 : 8,
+                    height: barHeight,
+                    paddingBottom: (isTelegram ? 4 : 8) + bottomInset,
                     paddingTop: 8,
                 },
                 tabBarActiveTintColor: colors.primary,

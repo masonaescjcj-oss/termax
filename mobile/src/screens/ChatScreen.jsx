@@ -22,6 +22,7 @@ import { Audio } from 'expo-av';
 import * as v from 'lucide-react-native';
 import { getItemAsync } from '../utils/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BACKEND_URL, isTelegram, getTgSafeAreaTop } from '../config';
 
 // Helper: Resolve image URL
@@ -98,6 +99,10 @@ const getAvatarSource = (avatarUrl) => {
     return avatars[avatarUrl] || null;
 };
 
+// A voice note is sent as base64 over the socket and stored in the row, so
+// its length is a direct cost to everyone in the room. A minute is plenty.
+const MAX_RECORD_SECONDS = 60;
+
 // Helper: Format elapsed recording time
 const formatDuration = (seconds) => {
     const min = Math.floor(seconds / 60);
@@ -118,6 +123,8 @@ export default function ChatScreen({
     isDark,
     colors
 }) {
+    const insets = useSafeAreaInsets();
+
     // Keyboard state tracking for Android (matching AICoachScreen pattern)
     const [isKeyboardActive, setIsKeyboardActive] = useState(false);
     useEffect(() => {
@@ -134,6 +141,13 @@ export default function ChatScreen({
             hideSubscription.remove();
         };
     }, []);
+
+    // The composer is the bottom-most thing on this screen and the tab bar
+    // is not under it, so it has to hold itself clear of the system
+    // navigation bar. Telegram draws its own chrome and reports no inset,
+    // and while the keyboard is open it has taken the navigation bar's
+    // place — adding the inset then would just leave a gap.
+    const footerInset = isTelegram || isKeyboardActive ? 0 : insets.bottom;
     const [messages, setMessages] = useState([]);
     const latestMessagesRef = useRef(messages);
     latestMessagesRef.current = messages;
@@ -143,6 +157,8 @@ export default function ChatScreen({
     const [contextMenuId, setContextMenuId] = useState(null);
     const [typingUsers, setTypingUsers] = useState([]);
     const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+    // The last thing the server refused to do, shown above the composer.
+    const [errorNotice, setErrorNotice] = useState(null);
     const [hasMore, setHasMore] = useState(true);
     const [isScrolledUp, setIsScrolledUp] = useState(false);
     const currentUserIdRef = useRef(currentUserId);
@@ -171,6 +187,7 @@ export default function ChatScreen({
     const soundRef = useRef(null);
     const recordingRef = useRef(null);
     const layoutYMap = useRef({});
+    const typingTimersRef = useRef(new Map());
 
     const isMember = joinedRooms.includes(roomName);
 
@@ -178,6 +195,7 @@ export default function ChatScreen({
 
     // Clean up sound on unmount
     useEffect(() => {
+        const typingTimers = typingTimersRef.current;
         return () => {
             if (soundRef.current) {
                 soundRef.current.unloadAsync().catch(() => {});
@@ -185,6 +203,8 @@ export default function ChatScreen({
             if (recordIntervalRef.current) {
                 clearInterval(recordIntervalRef.current);
             }
+            typingTimers.forEach(clearTimeout);
+            typingTimers.clear();
         };
     }, []);
 
@@ -313,7 +333,10 @@ export default function ChatScreen({
             if (isCancelled) return;
             socket = io(BACKEND_URL, {
                 transports: ['websocket'],
-                query: token ? { token } : {}
+                // `query` puts the token in the connection URL, where it
+                // lands in server access logs and any proxy in between.
+                // `auth` sends it in the handshake payload instead.
+                auth: token ? { token } : {}
             });
             socketRef.current = socket;
 
@@ -323,7 +346,9 @@ export default function ChatScreen({
             });
 
             socket.on('chatHistory', async (history) => {
-                const normalized = history.map(normalizeMessage);
+                const normalized = (Array.isArray(history) ? history : [])
+                    .map(normalizeMessage)
+                    .filter(m => m && m.id);
                 const cached = await loadCachedMessages();
                 const merged = mergeMessages(cached, normalized);
                 setMessages(merged);
@@ -338,6 +363,9 @@ export default function ChatScreen({
 
             socket.on('newMessage', (msg) => {
                 const normalized = normalizeMessage(msg);
+                // normalizeMessage answers null for an empty payload, and
+                // reading .id off it further down would take the screen out.
+                if (!normalized || !normalized.id) return;
                 setMessages((prev) => {
                     const exists = prev.some((m) => m.id === normalized.id);
                     if (exists) return prev;
@@ -400,7 +428,7 @@ export default function ChatScreen({
                     setIsLoadingOlder(false);
                     return;
                 }
-                const normalized = older.map(normalizeMessage);
+                const normalized = older.map(normalizeMessage).filter(m => m && m.id);
                 setMessages((prev) => {
                     const combined = [...normalized, ...prev];
                     // De-duplicate
@@ -415,14 +443,20 @@ export default function ChatScreen({
             });
 
             socket.on('userTyping', (data) => {
-                setTypingUsers((prev) => {
-                    if (prev.includes(data.username)) return prev;
-                    return [...prev, data.username];
-                });
-                // Clear typing indicator after 3 seconds
-                setTimeout(() => {
+                if (!data?.username) return;
+                setTypingUsers((prev) =>
+                    prev.includes(data.username) ? prev : [...prev, data.username]);
+
+                // Every event used to schedule its own removal, so someone
+                // typing continuously was dropped by the timer their first
+                // keystroke set and then added back — the indicator blinked
+                // the whole time they typed. One timer per name, reset.
+                const timers = typingTimersRef.current;
+                if (timers.has(data.username)) clearTimeout(timers.get(data.username));
+                timers.set(data.username, setTimeout(() => {
+                    timers.delete(data.username);
                     setTypingUsers((prev) => prev.filter((u) => u !== data.username));
-                }, 3000);
+                }, 3000));
             });
 
             socket.on('communityInfo', (info) => {
@@ -449,7 +483,16 @@ export default function ChatScreen({
             });
 
             socket.on('chatError', (err) => {
-                console.error('[ChatSocket] Error:', err);
+                // This was only ever logged to a console nobody has open.
+                // A refused message left its optimistic bubble on screen
+                // forever and the sender was told nothing at all.
+                const text = typeof err === 'string' ? err : (err?.message || 'Something went wrong.');
+                console.warn('[ChatSocket] Error:', text);
+                setErrorNotice(text);
+                setMessages(prev => prev.map(m =>
+                    m.id && m.id.toString().startsWith('temp_') && !m.failed
+                        ? { ...m, failed: true }
+                        : m));
             });
         };
 
@@ -527,8 +570,14 @@ export default function ChatScreen({
     // Send Message
     const handleSend = async () => {
         if (!inputText.trim() && !mediaAttachment) return;
-        const storedToken = await getItemAsync('accessToken');
-        const token = storedToken || 'guest_demo_token';
+        const token = await getItemAsync('accessToken');
+        // This used to fall back to the string 'guest_demo_token', which the
+        // server rejects. The message got its optimistic bubble, the send
+        // failed, and nothing ever said so.
+        if (!token) {
+            setErrorNotice('Sign in to send messages.');
+            return;
+        }
 
         const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
         const tempMsg = {
@@ -646,8 +695,17 @@ export default function ChatScreen({
     const startRecording = async () => {
         try {
             if (Platform.OS === 'web') {
+                if (typeof MediaRecorder === 'undefined') {
+                    setErrorNotice('This browser cannot record audio.');
+                    return;
+                }
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                // Safari does not support audio/webm, and naming a codec it
+                // cannot produce made the constructor throw — the mic button
+                // simply did nothing, with the reason in a console log.
+                const mimeType = ['audio/webm', 'audio/mp4', 'audio/ogg']
+                    .find(t => MediaRecorder.isTypeSupported?.(t));
+                const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
                 recordedChunksRef.current = [];
 
                 mediaRecorder.ondataavailable = (e) => {
@@ -661,7 +719,10 @@ export default function ChatScreen({
                 setIsRecording(true);
                 setRecordDuration(0);
                 recordIntervalRef.current = setInterval(() => {
-                    setRecordDuration((prev) => prev + 1);
+                    setRecordDuration((prev) => {
+                        if (prev + 1 >= MAX_RECORD_SECONDS) stopAndSendRecording();
+                        return prev + 1;
+                    });
                 }, 1000);
             } else {
                 const permission = await Audio.requestPermissionsAsync();
@@ -677,14 +738,22 @@ export default function ChatScreen({
                     setIsRecording(true);
                     setRecordDuration(0);
                     recordIntervalRef.current = setInterval(() => {
-                        setRecordDuration((prev) => prev + 1);
+                        setRecordDuration((prev) => {
+                            // Audio travels as base64 on the same socket as
+                            // the message, so a recording left running is an
+                            // attachment nobody can send.
+                            if (prev + 1 >= MAX_RECORD_SECONDS) stopAndSendRecording();
+                            return prev + 1;
+                        });
                     }, 1000);
                 } else {
                     Alert.alert('Permission Required', 'Microphone permission is required to record voice messages.');
                 }
             }
         } catch (err) {
-            console.error('Failed to start recording', err);
+            console.warn('Failed to start recording', err);
+            setErrorNotice('Could not start recording. Check the microphone permission.');
+            setIsRecording(false);
         }
     };
 
@@ -729,8 +798,18 @@ export default function ChatScreen({
             }
 
             if (base64Audio) {
-                const storedToken = await getItemAsync('accessToken');
-                const token = storedToken || 'guest_demo_token';
+                const token = await getItemAsync('accessToken');
+                if (!token) {
+                    setErrorNotice('Sign in to send messages.');
+                    return;
+                }
+                // The server refuses anything over 2MB, and a data URI is a
+                // third larger than the audio it carries. Say so here rather
+                // than sending it and having it bounce.
+                if (base64Audio.length > 2_000_000) {
+                    setErrorNotice('That recording is too long to send. Keep it under about a minute.');
+                    return;
+                }
                 const tempId = 'temp_voice_' + Date.now();
                 const tempMsg = {
                     id: tempId,
@@ -937,6 +1016,7 @@ export default function ChatScreen({
                 )}
 
                 {messages.map((msg, index) => {
+                    const isPending = msg.id && msg.id.toString().startsWith('temp_');
                     const isOwn = msg.userId === currentUserId || (msg.user && currentUserAliases.includes(msg.user.toLowerCase()));
                     const prevMsg = index > 0 ? messages[index - 1] : null;
                     const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
@@ -953,7 +1033,12 @@ export default function ChatScreen({
                                 styles.messageRow,
                                 {
                                     flexDirection: isOwn ? 'row-reverse' : 'row',
-                                    marginBottom: hasNextSequential ? 4 : 16
+                                    marginBottom: hasNextSequential ? 4 : 16,
+                                    // Still in flight, or refused by the
+                                    // server. Either way it is not yet a
+                                    // message anyone else can see, and it
+                                    // should not look like one.
+                                    opacity: msg.failed ? 0.45 : (isPending ? 0.6 : 1)
                                 }
                             ]}
                         >
@@ -1193,8 +1278,21 @@ export default function ChatScreen({
                 </View>
             )}
 
+            {/* Whatever the server last refused to do */}
+            {errorNotice && (
+                <TouchableOpacity
+                    onPress={() => setErrorNotice(null)}
+                    activeOpacity={0.8}
+                    style={styles.errorNotice}
+                >
+                    <v.AlertTriangle color="#F43F5E" size={15} />
+                    <Text style={styles.errorNoticeText} numberOfLines={2}>{errorNotice}</Text>
+                    <Text style={styles.errorNoticeClose}>×</Text>
+                </TouchableOpacity>
+            )}
+
             {/* Footer Input Area */}
-            <View style={styles.footerContainer}>
+            <View style={[styles.footerContainer, { paddingBottom: 10 + footerInset }]}>
                 {!isAuthenticated ? (
                     <View
                         style={[styles.joinBtn, { backgroundColor: '#000000', borderWidth: 1, borderColor: colors.border || '#333333' }]}
@@ -1619,6 +1717,21 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontStyle: 'italic'
     },
+    errorNotice: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 12,
+        marginBottom: 6,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(244,63,94,0.35)',
+        backgroundColor: 'rgba(244,63,94,0.10)'
+    },
+    errorNoticeText: { flex: 1, color: '#FCA5A5', fontSize: 12 },
+    errorNoticeClose: { color: '#FCA5A5', fontSize: 16, paddingHorizontal: 4 },
     footerContainer: {
         paddingBottom: 10,
         paddingTop: 4,

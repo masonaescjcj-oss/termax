@@ -447,14 +447,57 @@ export const mapTradeHistoryToSnake = (appHist: any): any => {
     return snake;
 };
 
-export function createQueryChain<T>(promise: Promise<T>): any {
-    return Object.assign(promise, {
-        sort: function(...args: any[]) { return this; },
-        limit: function(...args: any[]) { return this; },
-        populate: function(...args: any[]) { return this; },
-        select: function(...args: any[]) { return this; },
-        lean: function(...args: any[]) { return this; },
-        exec: function(...args: any[]) { return this; }
-    });
+/**
+ * Mongoose-shaped chaining over a Supabase query.
+ *
+ * ⚠️ In the eager form — `createQueryChain(promise)` — every chained method
+ * is a no-op. The query has already run by the time `.limit(50)` is called,
+ * so the limit is silently ignored. That is how `ChatMessage.find({ room })
+ * .limit(50)` came to download a room's entire history on every join.
+ *
+ * Prefer the lazy form: pass a factory and it receives whatever was chained,
+ * so a model can actually honour it.
+ *
+ *     createQueryChain((opts) => runQuery(opts))   // opts.limit is real
+ */
+export type QueryOptions = {
+    limit?: number;
+    sort?: Record<string, 1 | -1>;
+};
+
+export function createQueryChain<T>(
+    source: Promise<T> | ((opts: QueryOptions) => Promise<T>)
+): any {
+    if (typeof source !== 'function') {
+        // Eager: the query is already in flight, so the chain can only
+        // pretend. Kept for the models that have not been converted.
+        return Object.assign(source, {
+            sort: function(..._args: any[]) { return this; },
+            limit: function(..._args: any[]) { return this; },
+            populate: function(..._args: any[]) { return this; },
+            select: function(..._args: any[]) { return this; },
+            lean: function(..._args: any[]) { return this; },
+            exec: function(..._args: any[]) { return this; },
+        });
+    }
+
+    const opts: QueryOptions = {};
+    let started: Promise<T> | null = null;
+    const run = () => (started ??= source(opts));
+
+    const chain: any = {
+        sort(order: Record<string, 1 | -1>) { opts.sort = order; return chain; },
+        limit(n: number) { opts.limit = n; return chain; },
+        // These have no Supabase equivalent to defer; the model does the
+        // work itself and they stay pass-throughs.
+        populate(..._args: any[]) { return chain; },
+        select(..._args: any[]) { return chain; },
+        lean(..._args: any[]) { return chain; },
+        exec() { return run(); },
+        then(onOk: any, onErr: any) { return run().then(onOk, onErr); },
+        catch(onErr: any) { return run().catch(onErr); },
+        finally(onEnd: any) { return run().finally(onEnd); },
+    };
+    return chain;
 }
 

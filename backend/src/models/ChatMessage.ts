@@ -44,15 +44,29 @@ export default class ChatMessage {
         return { ...this };
     }
 
+    /**
+     * Chat history, newest first.
+     *
+     * The chained `.limit(50)` used to be a no-op — the query had already
+     * run by the time it was called — so joining a room fetched every
+     * message it had ever carried, base64 images and voice notes included,
+     * and sent all of them to the client. The lazy chain now hands the
+     * limit down, and a room without one is capped anyway: an unbounded
+     * chat query has no legitimate caller.
+     */
     static find(query: any = {}): any {
-        const promise = (async () => {
+        return createQueryChain(async (opts) => {
             let q = supabase.from('chat_messages').select('*');
             if (query.room) q = q.eq('room', query.room);
             if (query.createdAt && query.createdAt.$lt) {
                 q = q.lt('created_at', new Date(query.createdAt.$lt).toISOString());
             }
 
-            const { data, error } = await q.order('created_at', { ascending: false });
+            const ascending = opts.sort?.createdAt === 1;
+            q = q.order('created_at', { ascending });
+            q = q.limit(Math.min(Math.max(Number(opts.limit) || 50, 1), 200));
+
+            const { data, error } = await q;
             if (error) throw new Error(error.message);
 
             const mapped = (data || []).map(d => mapChatMessageToCamel(d));
@@ -81,9 +95,7 @@ export default class ChatMessage {
             }
 
             return mapped;
-        })();
-
-        return createQueryChain(promise);
+        });
     }
 
     static findById(id: string): any {

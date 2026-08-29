@@ -54,6 +54,15 @@ export default class User {
             if (query.username && query.username.$in) {
                 q = q.in('username', query.username.$in);
             }
+            // `_id: { $in: [...] }` was silently ignored, so a caller asking
+            // for a handful of users by id was handed the entire table
+            // instead — and never noticed, because the answer contained
+            // what it was looking for.
+            const idIn = query._id?.$in ?? query.id?.$in;
+            if (idIn) {
+                if (!idIn.length) return [];
+                q = q.in('id', idIn.map((v: any) => String(v)));
+            }
             const { data, error } = await q;
             if (error) throw new Error(error.message);
             return (data || []).map(d => new User(mapUserToCamel(d)));

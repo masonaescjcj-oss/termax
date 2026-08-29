@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, SafeAreaView, ActivityIndicator, Keyboard, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, TextInput } from '../components/Typography';
 ;
 import axios from 'axios';
@@ -26,6 +27,9 @@ export default function AICoachScreen() {
     const { colors, isDark } = useTheme();
     const navigation = useNavigation<any>();
     const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+    const insets = useSafeAreaInsets();
+    // Telegram draws its own chrome and reports no inset of its own.
+    const composerInset = isTelegram ? 0 : insets.bottom;
 
     useEffect(() => {
         if (!isTelegram) return;
@@ -823,7 +827,11 @@ export default function AICoachScreen() {
 
                 <PaywallBanner />
 
-                <View style={[styles.floatingInputWrapper, { borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: colors.glassCardBorder }]}>
+                {/* This screen hides the tab bar, so nothing else is holding
+                    the composer clear of the system navigation bar. React
+                    Native's SafeAreaView does not apply insets on Android,
+                    which is why it sat underneath the gesture bar. */}
+                <View style={[styles.floatingInputWrapper, { marginBottom: 16 + composerInset, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: colors.glassCardBorder }]}>
                     <LinearGradient
                         colors={isDark ? ['rgba(255, 255, 255, 0.02)', 'rgba(255, 255, 255, 0.01)'] : ['rgba(255, 255, 255, 0.45)', 'rgba(255, 255, 255, 0.15)']}
                         start={{ x: 0, y: 0 }}

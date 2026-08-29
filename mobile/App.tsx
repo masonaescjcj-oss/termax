@@ -5,6 +5,7 @@ import { View, ScrollView, SafeAreaView, TouchableOpacity, Platform } from 'reac
 import { Text } from './src/components/Typography';
 ;
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
 import { colors } from './src/theme/colors';
 import { isTelegram } from './src/config';
@@ -348,8 +349,15 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <AppContent />
-    </ThemeProvider>
+    // Nothing was reading the device's safe-area insets: the package was a
+    // dependency but the provider was never mounted, so `useSafeAreaInsets`
+    // returned zeros everywhere. On a phone with a gesture bar or the
+    // three-button navigation bar, that is what put the tab bar and the
+    // chat input underneath the system navigation.
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <AppContent />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
