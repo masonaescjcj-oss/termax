@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import axios from 'axios';
 import YahooFinance from 'yahoo-finance2';
-import { processTrailingStops, processTPSL, processStopOuts, runGlobalStopOutCheck, processPendingOrders, accrueOvernightSwap } from '../controllers/tradeController';
+import { processTrailingStops, processTPSL, processStopOuts, runGlobalStopOutCheck, processPendingOrders, accrueOvernightSwap, reconcileOpenPositions } from '../controllers/tradeController';
 import fs from 'fs';
 import path from 'path';
 import { setMidPrice, setQuote, getMid, getQuote, getAllMids, getSpreadPips } from '../services/pricing';
@@ -511,7 +511,13 @@ export const setupMarketSockets = (io: Server) => {
     setInterval(() => { accrueOvernightSwap().catch(() => {}); }, 60_000);
 
     // Global stop-out check — catches margin violations even for symbols
-    // no one is actively viewing
+    // no one is actively viewing.
+    //
+    // Every pass used to begin by asking the database for all open positions,
+    // which cost 43,200 queries a day on an idle server. It now screens the
+    // engine's in-memory index first and only reads the database for an
+    // account that is actually at the stop-out level, so an idle pass is free
+    // and the 2-second cadence costs nothing to keep.
     setInterval(async () => {
         try {
             await runGlobalStopOutCheck();
@@ -519,4 +525,10 @@ export const setupMarketSockets = (io: Server) => {
             // silent
         }
     }, 2000);
+
+    // The index the hot loops read is kept current by the trade lifecycle;
+    // this is the slow repair for anything that wrote positions behind our
+    // back or was lost to a crash mid-close. Minutes, not seconds — it is a
+    // safety net, not a control loop.
+    setInterval(() => { reconcileOpenPositions().catch(() => {}); }, 5 * 60_000);
 };

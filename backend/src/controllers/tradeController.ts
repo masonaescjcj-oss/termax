@@ -459,6 +459,148 @@ export async function processPendingOrders(
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  MARGIN SCREEN — works out who needs the database without touching it
+//
+//  The stop-out check runs on a timer whether or not anybody is trading, so
+//  whatever it does unconditionally is paid for around the clock. It used to
+//  open with `Position.find({ status: 'OPEN' })` on every pass, and at one
+//  pass every two seconds that is 43,200 queries a day against an account
+//  with no open position at all — and several times that once one exists,
+//  because each user then cost a user row and a position query per pass.
+//
+//  Every open simulated position is already in `positionMap`: the trade
+//  lifecycle keeps it current and `reconcileOpenPositions` repairs drift.
+//  So the screen values each account from memory and sends it down the
+//  database path only when its margin level really is at the stop-out
+//  threshold. A flat engine costs nothing; a healthy account costs one user
+//  row a minute. The liquidation path below is unchanged and still re-reads
+//  and re-checks everything before closing anything — the screen only
+//  decides who is worth asking about.
+// ═══════════════════════════════════════════════════════════════
+
+/** Read-only user rows, for screening only — never saved from here. */
+const screenUsers = new Map<string, { at: number; user: any }>();
+const SCREEN_USER_TTL_MS = 60_000;
+
+/**
+ * Forget a cached row. Called wherever a balance changes, so the screen
+ * never values an account against money it no longer has.
+ */
+export function invalidateScreenUser(userId: string) {
+    screenUsers.delete(String(userId));
+}
+
+async function screenUser(userId: string): Promise<any | null> {
+    const hit = screenUsers.get(userId);
+    if (hit && Date.now() - hit.at < SCREEN_USER_TTL_MS) return hit.user;
+    const user = await User.findById(userId);
+    if (!user) return null;
+    screenUsers.set(userId, { at: Date.now(), user });
+    return user;
+}
+
+type OpenAccount = { userId: string; accountId?: string; positions: any[] };
+
+/** Open simulated positions grouped by account, straight from the index. */
+function openByAccount(userFilter?: Set<string>): OpenAccount[] {
+    const groups = new Map<string, OpenAccount>();
+    for (const pos of positionMap.values()) {
+        // A PENDING order has not been filled, so it holds no margin.
+        if (pos.status !== 'OPEN') continue;
+        const userId = pos.userId?.toString();
+        if (!userId) continue;
+        if (userFilter && !userFilter.has(userId)) continue;
+        const accountId = pos.accountId || undefined;
+        const key = `${userId}::${accountId ?? ''}`;
+        let g = groups.get(key);
+        if (!g) { g = { userId, accountId, positions: [] }; groups.set(key, g); }
+        g.positions.push(pos);
+    }
+    return [...groups.values()];
+}
+
+/**
+ * The users holding an account at or below the stop-out level.
+ * Returns an empty list, having issued no query at all, when nothing is open.
+ */
+export async function usersAtStopOut(userFilter?: Set<string>): Promise<string[]> {
+    const groups = openByAccount(userFilter);
+    if (!groups.length) return [];
+
+    const atRisk = new Set<string>();
+    for (const g of groups) {
+        // One flagged account already sends the whole user to the real check,
+        // which walks every account they hold.
+        if (atRisk.has(g.userId)) continue;
+
+        const user = await screenUser(g.userId);
+        if (!user) continue;
+
+        const account = g.accountId
+            ? user.cTraderAccounts?.find((a: any) => a.cTraderId === g.accountId)
+            // Legacy rows carry no accountId; they predate multi-account support.
+            : user.cTraderAccounts?.find((a: any) => a.accountType === 'DEMO');
+        const balance = account?.balance;
+        if (balance === undefined || balance === null || balance <= 0) continue;
+
+        const m = accountMetrics(balance, g.positions as any);
+        // A position we cannot value makes the margin level meaningless. The
+        // database path refuses to liquidate on a partial picture, so there
+        // is nothing to be gained by sending it there.
+        if (m.unpriced.length) continue;
+        if (m.margin > 0 && m.marginLevel <= STOP_OUT_LEVEL) atRisk.add(g.userId);
+    }
+    return [...atRisk];
+}
+
+/**
+ * Repair the in-memory index from the database.
+ *
+ * The index is the authority for every hot path, so it must not be allowed
+ * to drift: a position written by another process, or one whose removal was
+ * lost to a crash mid-close, would otherwise stay invisible (or immortal)
+ * until the next restart. This is the safety net the 2-second poll used to
+ * be, and being a safety net rather than a control loop it runs on a timer
+ * measured in minutes.
+ */
+export async function reconcileOpenPositions(): Promise<{ added: number; removed: number }> {
+    // Anything opened while the read below is in flight is younger than the
+    // snapshot the database answers with, so it must not be treated as a row
+    // that has gone away. Only what the index held before the read is
+    // eligible for removal.
+    const before = new Set(positionMap.keys());
+    const rows = (await Position.find({ status: { $in: ['OPEN', 'PENDING'] } })) as any[];
+    const live = new Set<string>();
+    let added = 0;
+    let removed = 0;
+
+    for (const pos of rows) {
+        if (pos.venue === 'CTRADER') continue;
+        const id = (pos._id ?? pos.id)?.toString();
+        if (!id) continue;
+        live.add(id);
+        // Never overwrite a row the engine already holds: it may carry a
+        // trailing stop that has moved since it was last written.
+        if (!positionMap.has(id) && !activeOperations.has(id)) {
+            addToIndex(pos);
+            added++;
+        }
+    }
+
+    for (const [id, pos] of [...positionMap]) {
+        if (!before.has(id)) continue;
+        if (live.has(id) || activeOperations.has(id)) continue;
+        removeFromIndex(id, pos.symbol);
+        removed++;
+    }
+
+    if (added || removed) {
+        console.log(`🔄 [Trading Engine] Index reconciled: +${added} / -${removed}`);
+    }
+    return { added, removed };
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  STOP-OUT ENGINE — O(m) per symbol tick where m = users holding symbol
 // ═══════════════════════════════════════════════════════════════
 
@@ -477,7 +619,9 @@ export async function processStopOuts(symbol: string, currentPrice: number) {
         }
     }
 
-    for (const userId of affectedUserIds) {
+    if (!affectedUserIds.size) return;
+
+    for (const userId of await usersAtStopOut(affectedUserIds)) {
         await processStopOutForUser(userId);
     }
 }
@@ -519,7 +663,7 @@ async function processStopOutForAccount(userId: string, user: any, accountId: st
         const dbBalance = account.balance;
         if (dbBalance === undefined || dbBalance === null || dbBalance <= 0) return;
 
-        const acctState = await getAccountState(userId, accountId);
+        const acctState = await getAccountState(userId, accountId, user);
 
         // A position we cannot value would make the margin level meaningless,
         // so never liquidate on a partial picture.
@@ -597,15 +741,12 @@ async function processStopOutForAccount(userId: string, user: any, accountId: st
     }
 }
 
-// Global stop-out check for ALL users with open positions (runs independently of subscriptions)
+// Global stop-out check for ALL users with open positions (runs independently
+// of subscriptions). The margin screen above decides who to look at, so a
+// pass over a flat engine issues no query at all.
 export async function runGlobalStopOutCheck() {
     try {
-        const openPositions = await Position.find({ status: 'OPEN' });
-        const userIds = new Set<string>();
-        for (const pos of openPositions) {
-            userIds.add(pos.userId.toString());
-        }
-        for (const userId of userIds) {
+        for (const userId of await usersAtStopOut()) {
             await processStopOutForUser(userId);
         }
     } catch (err) {
@@ -722,6 +863,10 @@ async function creditRealisedPnL(user: any, pos: any, amount: number): Promise<b
     if (account.balance < 0) account.balance = 0;
     user.markModified?.('cTraderAccounts');
     await user.save();
+    // The margin screen holds user rows for a minute; this balance is now
+    // stale there, and a stale balance is exactly what would hide a
+    // stop-out.
+    invalidateScreenUser(String(user.id ?? user._id));
     // Trade-stats rollup: one tiny upsert per close, so the AI can answer
     // "how am I doing?" without aggregating position history every time.
     void recordClosedTrade(String(user.id ?? user._id), String(account.cTraderId ?? ''), amount)
