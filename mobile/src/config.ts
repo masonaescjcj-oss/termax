@@ -41,6 +41,15 @@ const getBackendUrl = () => {
 
 export const BACKEND_URL = getBackendUrl();
 
+/**
+ * The admin console lives at its own address now, not inside this app.
+ *
+ * Set this to wherever `admin/` is deployed. Leaving it blank simply means
+ * the app shows no link — the console is still reachable by typing its URL,
+ * and admins are the only people who would.
+ */
+export const ADMIN_CONSOLE_URL = '';
+
 export const isTelegram = Platform.OS === 'web' && typeof window !== 'undefined' && 
   (window.location.search.includes('tgWebAppData') || 
    window.location.hash.includes('tgWebAppData') || 

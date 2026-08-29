@@ -162,3 +162,19 @@ them is unverified.
   numbers — refuse the operation instead.
 - `SYNTHETIC_TICKS=true` is for demos only. It must never reach the execution
   path; the wiring that keeps it out is in `sockets/marketSocket.ts`.
+
+## Admin console (separate site)
+
+The admin panel is no longer part of the app. It lives in `admin/` as its own
+Vite + React site and talks to the same backend. See `admin/README.md`.
+
+Two things are needed before it is fully live:
+
+1. **Deploy `admin/`.** `npm run build` produces a static `dist/`; any static
+   host works, as long as unknown paths fall back to `index.html`. Set
+   `VITE_API_URL` to the backend's public origin. Then put that address in
+   `mobile/src/config.ts` as `ADMIN_CONSOLE_URL` if you want the app to show
+   admins a link to it.
+2. **Run `backend/src/scripts/migrations/013_admin_audit.sql`** on Supabase.
+   Until it exists the audit page says so and everything else works — only
+   the log itself depends on it.

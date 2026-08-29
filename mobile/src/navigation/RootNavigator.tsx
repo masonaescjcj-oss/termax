@@ -12,7 +12,6 @@ import ChartScreen from '../screens/ChartScreen';
 import AssetDetailsScreen from '../screens/AssetDetailsScreen';
 import PositionsScreen from '../screens/PositionsScreen';
 import LoginScreen from '../screens/LoginScreen';
-import AdminScreen from '../screens/AdminScreen';
 import AICoachScreen from '../screens/AICoachScreen';
 import ToolsHubScreen from '../screens/ToolsHubScreen';
 import NewsRadarScreen from '../screens/NewsRadarScreen';
@@ -384,7 +383,6 @@ export default function RootNavigator() {
                 <Stack.Screen name="AssetDetails" component={AssetDetailsScreen} />
                 <Stack.Screen name="ToolsHub" component={ToolsHubScreen} />
                 <Stack.Screen name="NewsRadar" component={NewsRadarScreen} />
-                <Stack.Screen name="Admin" component={AdminScreen} />
                 <Stack.Screen name="EarnNft" component={EarnNftScreen} />
                 <Stack.Screen name="Bots" component={BotsScreen} />
                 <Stack.Screen name="TradeDna" component={TradeDnaScreen} />

@@ -15,6 +15,10 @@ import {
     mapBrokerReviewToCamel
 } from '../utils/mapper';
 import { loadAIConfig, saveAIConfig, AIConfig } from '../utils/aiConfigManager';
+import { mapPositionToCamel } from '../utils/mapper';
+import { recordAdminAction, readAuditLog } from '../services/adminAudit';
+import { closeSimulatedAtMarket, invalidateScreenUser } from './tradeController';
+import { unrealizedPnL } from '../services/pricing';
 
 // ═══════════════════════════════════════════════════════════
 // UPLOAD IMAGE (Base64)
@@ -126,6 +130,10 @@ export const updateUserPlan = async (req: AuthRequest, res: Response) => {
         if (error || !user) {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
+        recordAdminAction(req, {
+            action: 'user.plan', targetType: 'user', targetId: String(userId),
+            summary: `Put ${user.username} on ${plan}`, detail: { plan },
+        });
         res.json({ success: true, message: `${user.username} is now on ${plan}.`, data: user });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -166,6 +174,11 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
         if (error || !user) {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
+
+        recordAdminAction(req, {
+            action: 'user.role', targetType: 'user', targetId: String(userId),
+            summary: `Made ${user.username} ${role}`, detail: { role },
+        });
 
         res.json({
             success: true,
@@ -234,6 +247,10 @@ export const addBroker = async (req: AuthRequest, res: Response) => {
             return res.status(500).json({ success: false, message: error?.message || 'Failed to add broker.' });
         }
 
+        recordAdminAction(req, {
+            action: 'broker.create', targetType: 'broker', targetId: String(broker.id),
+            summary: `Added broker ${name}`,
+        });
         res.status(201).json({ success: true, message: `Broker ${name} added.`, data: mapBrokerToCamel(broker) });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -259,6 +276,10 @@ export const editBroker = async (req: AuthRequest, res: Response) => {
         }
         if (!brokers || brokers.length === 0) return res.status(404).json({ success: false, message: 'Broker not found' });
         const broker = brokers[0];
+        recordAdminAction(req, {
+            action: 'broker.update', targetType: 'broker', targetId: String(id),
+            summary: `Edited broker ${broker.name}`, detail: { fields: Object.keys(updates) },
+        });
         res.status(200).json({ success: true, message: `Broker updated.`, data: mapBrokerToCamel(broker) });
     } catch (error: any) {
         console.error('editBroker uncaught error:', error);
@@ -277,6 +298,10 @@ export const deleteBroker = async (req: AuthRequest, res: Response) => {
             .single();
 
         if (error || !broker) return res.status(404).json({ success: false, message: 'Broker not found.' });
+        recordAdminAction(req, {
+            action: 'broker.delete', targetType: 'broker', targetId: String(id),
+            summary: `Deactivated broker ${broker.name}`,
+        });
         res.json({ success: true, message: `Broker ${broker.name} deactivated.` });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -315,6 +340,10 @@ export const createCommunity = async (req: AuthRequest, res: Response) => {
             return res.status(500).json({ success: false, message: error?.message || 'Failed to create community.' });
         }
 
+        recordAdminAction(req, {
+            action: 'community.create', targetType: 'community', targetId: String(community.id),
+            summary: `Created community "${name}"`,
+        });
         res.status(201).json({ success: true, message: `Community "${name}" created.`, data: mapCommunityToCamel(community) });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -332,6 +361,10 @@ export const deleteCommunity = async (req: AuthRequest, res: Response) => {
             .single();
 
         if (error || !community) return res.status(404).json({ success: false, message: 'Community not found.' });
+        recordAdminAction(req, {
+            action: 'community.delete', targetType: 'community', targetId: String(id),
+            summary: `Deactivated community "${community.name}"`,
+        });
         res.json({ success: true, message: `Community "${community.name}" deactivated.` });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -394,6 +427,10 @@ export const editCommunity = async (req: AuthRequest, res: Response) => {
             .single();
 
         if (error || !community) return res.status(404).json({ success: false, message: 'Community not found.' });
+        recordAdminAction(req, {
+            action: 'community.update', targetType: 'community', targetId: String(id),
+            summary: `Edited community "${community.name}"`,
+        });
         res.json({ success: true, message: 'Community updated.', data: mapCommunityToCamel(community) });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -478,6 +515,11 @@ export const assignCommunityAdmin = async (req: AuthRequest, res: Response) => {
             return res.status(500).json({ success: false, message: 'Failed to update community roles.' });
         }
 
+        recordAdminAction(req, {
+            action: 'community.role', targetType: 'community', targetId: String(id),
+            summary: `Made ${targetUser.username} a ${role || 'member'} of "${community.name}"`,
+            detail: { userId: userIdStr, role: role || 'member' },
+        });
         res.json({ success: true, message: `${targetUser.username} is now a ${role || 'member'}.` });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -518,6 +560,10 @@ export const createPromotedSymbol = async (req: AuthRequest, res: Response) => {
             return res.status(500).json({ success: false, message: error?.message || 'Failed to create promoted symbol.' });
         }
 
+        recordAdminAction(req, {
+            action: 'symbol.create', targetType: 'symbol', targetId: String(promoted.id),
+            summary: `Promoted ${symbol}`,
+        });
         res.status(201).json({ success: true, message: `Symbol ${symbol} promoted.`, data: mapPromotedSymbolToCamel(promoted) });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -537,6 +583,10 @@ export const editPromotedSymbol = async (req: AuthRequest, res: Response) => {
             .single();
 
         if (error || !symbol) return res.status(404).json({ success: false, message: 'Symbol not found' });
+        recordAdminAction(req, {
+            action: 'symbol.update', targetType: 'symbol', targetId: String(id),
+            summary: `Edited promoted symbol ${symbol.symbol}`,
+        });
         res.status(200).json({ success: true, message: `Symbol updated.`, data: mapPromotedSymbolToCamel(symbol) });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -555,6 +605,10 @@ export const deletePromotedSymbol = async (req: AuthRequest, res: Response) => {
             return res.status(404).json({ success: false, message: 'Symbol not found' });
         }
 
+        recordAdminAction(req, {
+            action: 'symbol.delete', targetType: 'symbol', targetId: String(id),
+            summary: 'Removed a promoted symbol',
+        });
         res.json({ success: true, message: 'Promoted symbol removed.' });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -657,6 +711,10 @@ export const approveReview = async (req: AuthRequest, res: Response) => {
             .single();
 
         if (error || !review) return res.status(404).json({ success: false, message: 'Review not found.' });
+        recordAdminAction(req, {
+            action: 'review.approve', targetType: 'review', targetId: String(id),
+            summary: 'Approved a broker review',
+        });
         res.json({ success: true, message: 'Review approved.' });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -672,6 +730,10 @@ export const deleteReview = async (req: AuthRequest, res: Response) => {
             .eq('id', id);
 
         if (error) return res.status(404).json({ success: false, message: 'Review not found.' });
+        recordAdminAction(req, {
+            action: 'review.delete', targetType: 'review', targetId: String(id),
+            summary: 'Deleted a broker review',
+        });
         res.json({ success: true, message: 'Review deleted.' });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
@@ -846,6 +908,12 @@ export const updateAIConfig = async (req: AuthRequest, res: Response) => {
         };
 
         await saveAIConfig(updatedConfig);
+        recordAdminAction(req, {
+            action: 'ai.config', targetType: 'config', targetId: 'ai',
+            // Never the key itself, only that it moved.
+            summary: `AI provider set to ${activeProvider} / ${modelName}`,
+            detail: { activeProvider, baseUrl, modelName, keyReplaced: nextKey !== current.apiKey },
+        });
         res.json({
             success: true,
             message: 'AI configuration updated successfully',
@@ -863,5 +931,389 @@ export const updateAIConfig = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  USER DETAIL, SEARCH AND MODERATION
+//
+//  The old users endpoint returned the newest hundred rows and nothing
+//  else: no search, no paging, and no way to look at one account. On an app
+//  with more than a hundred users that is a list you cannot find anyone in.
+// ═══════════════════════════════════════════════════════════
+
+/** One page of users, filtered and searched. */
+export const searchUsers = async (req: AuthRequest, res: Response) => {
+    try {
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const perPage = Math.min(Math.max(Number(req.query.perPage) || 25, 1), 100);
+        const q = String(req.query.q || '').trim();
+        const role = String(req.query.role || '').trim();
+        const plan = String(req.query.plan || '').trim();
+
+        let query = supabase
+            .from('users')
+            .select('id, username, email, role, plan, avatar_url, telegram_id, referral_count, settings, ctrader_accounts, last_login, created_at', { count: 'exact' })
+            .order('created_at', { ascending: false })
+            .range((page - 1) * perPage, page * perPage - 1);
+
+        if (q) {
+            // `or` takes a filter string, so anything the caller typed has to
+            // be neutered first: a comma or a parenthesis in here is syntax.
+            const safe = q.replace(/[,()*\\]/g, ' ').trim();
+            if (safe) query = query.or(`username.ilike.%${safe}%,email.ilike.%${safe}%`);
+        }
+        if (['user', 'admin', 'moderator'].includes(role)) query = query.eq('role', role);
+        if (['FREE', 'PRO'].includes(plan)) query = query.eq('plan', plan);
+
+        const { data, count, error } = await query;
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        const rows = (data || []).map((u: any) => {
+            const accounts = u.ctrader_accounts || [];
+            return {
+                _id: u.id,
+                id: u.id,
+                username: u.username,
+                email: u.email,
+                role: u.role,
+                plan: u.plan || 'FREE',
+                avatarUrl: u.avatar_url,
+                telegramId: u.telegram_id,
+                referralCount: u.referral_count || 0,
+                deactivated: u.settings?.deactivated === true,
+                accounts: accounts.length,
+                balance: accounts.reduce((s: number, a: any) => s + Number(a.balance || 0), 0),
+                lastLogin: u.last_login,
+                createdAt: u.created_at,
+            };
+        });
+
+        res.json({ success: true, data: rows, total: count || 0, page, perPage });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/** Everything about one account, on one screen. */
+export const getUserDetail = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+        const [openRes, closedRes, botsRes] = await Promise.all([
+            supabase.from('positions').select('*').eq('user_id', id).eq('status', 'OPEN'),
+            supabase.from('positions').select('final_profit').eq('user_id', id).eq('status', 'CLOSED'),
+            supabase.from('bots').select('id, name, status, account_id, created_at').eq('user_id', id),
+        ]);
+
+        const closed = (closedRes.data || []) as any[];
+        const netProfit = closed.reduce((s, p) => s + Number(p.final_profit || 0), 0);
+        const wins = closed.filter(p => Number(p.final_profit || 0) > 0).length;
+
+        res.json({
+            success: true,
+            data: {
+                profile: mapUserToCamel(user),
+                deactivated: user.settings?.deactivated === true,
+                accounts: (user.ctrader_accounts || []).map((a: any) => ({
+                    cTraderId: a.cTraderId,
+                    accountType: a.accountType,
+                    broker: a.broker,
+                    balance: Number(a.balance || 0),
+                    currency: a.currency || 'USD',
+                })),
+                openPositions: (openRes.data || []).map(mapPositionToCamel),
+                stats: {
+                    closedTrades: closed.length,
+                    wins,
+                    winRate: closed.length ? Number(((wins / closed.length) * 100).toFixed(1)) : 0,
+                    netProfit: Number(netProfit.toFixed(2)),
+                },
+                bots: (botsRes.data || []).map((b: any) => ({
+                    id: b.id, name: b.name, status: b.status,
+                    accountId: b.account_id, createdAt: b.created_at,
+                })),
+            },
+        });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Suspend or restore an account.
+ *
+ * Login already refuses a profile carrying `settings.deactivated`, so this
+ * is the switch behind a door that was already there but had nothing to
+ * open it.
+ */
+export const setUserActive = async (req: AuthRequest, res: Response) => {
+    try {
+        const { userId, active } = req.body;
+        if (!userId || typeof active !== 'boolean') {
+            return res.status(400).json({ success: false, message: 'userId and active (boolean) required.' });
+        }
+        if (userId === req.user?.id && active === false) {
+            return res.status(409).json({ success: false, message: 'You cannot suspend your own account.' });
+        }
+
+        const { data: user, error: readErr } = await supabase
+            .from('users')
+            .select('id, username, role, settings')
+            .eq('id', userId)
+            .maybeSingle();
+        if (readErr || !user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+        const settings = { ...(user.settings || {}), deactivated: !active };
+        const { error } = await supabase.from('users').update({ settings }).eq('id', userId);
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        recordAdminAction(req, {
+            action: active ? 'user.restore' : 'user.suspend',
+            targetType: 'user', targetId: userId,
+            summary: `${active ? 'Restored' : 'Suspended'} ${user.username}`,
+        });
+
+        res.json({ success: true, message: `${user.username} is ${active ? 'active' : 'suspended'}.` });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Set a simulated account's balance.
+ *
+ * Demo money only — a CTRADER account's balance is the broker's number and
+ * writing over it here would only make our copy lie.
+ */
+export const setAccountBalance = async (req: AuthRequest, res: Response) => {
+    try {
+        const { userId, accountId, balance } = req.body;
+        const amount = Number(balance);
+        if (!userId || !accountId || !Number.isFinite(amount) || amount < 0) {
+            return res.status(400).json({ success: false, message: 'userId, accountId and a balance of 0 or more are required.' });
+        }
+        if (amount > 10_000_000) {
+            return res.status(400).json({ success: false, message: 'That balance is not a plausible demo account.' });
+        }
+
+        const { data: user, error: readErr } = await supabase
+            .from('users')
+            .select('id, username, ctrader_accounts')
+            .eq('id', userId)
+            .maybeSingle();
+        if (readErr || !user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+        const accounts = (user.ctrader_accounts || []) as any[];
+        const target = accounts.find(a => a.cTraderId === accountId);
+        if (!target) return res.status(404).json({ success: false, message: 'Account not found on that user.' });
+        if (target.accountType !== 'DEMO') {
+            return res.status(409).json({ success: false, message: 'Only a demo balance can be set here — a live balance belongs to the broker.' });
+        }
+
+        const before = Number(target.balance || 0);
+        target.balance = amount;
+
+        const { error } = await supabase.from('users').update({ ctrader_accounts: accounts }).eq('id', userId);
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        // The margin screen caches user rows for a minute; this balance is
+        // now stale in it, and a stale balance is what hides a stop-out.
+        invalidateScreenUser(userId);
+
+        recordAdminAction(req, {
+            action: 'user.balance',
+            targetType: 'user', targetId: userId,
+            summary: `Set ${user.username}'s ${accountId} balance to $${amount.toFixed(2)} (was $${before.toFixed(2)})`,
+            detail: { accountId, before, after: amount },
+        });
+
+        res.json({ success: true, message: `Balance set to $${amount.toFixed(2)}.` });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  POSITION OVERSIGHT
+//
+//  What the platform is actually carrying right now. The dashboard counted
+//  open positions from the start but there was no way to look at them.
+// ═══════════════════════════════════════════════════════════
+
+export const listOpenPositions = async (req: AuthRequest, res: Response) => {
+    try {
+        const status = ['OPEN', 'PENDING', 'CLOSED'].includes(String(req.query.status))
+            ? String(req.query.status)
+            : 'OPEN';
+        const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+        const symbol = String(req.query.symbol || '').trim().toUpperCase();
+
+        let q = supabase
+            .from('positions')
+            .select('*, users (username)')
+            .eq('status', status)
+            .order('open_time', { ascending: false })
+            .limit(limit);
+        if (symbol) q = q.eq('symbol', symbol);
+
+        const { data, error } = await q;
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        const rows = (data || []).map((p: any) => ({
+            ...mapPositionToCamel(p),
+            username: p.users?.username || null,
+            // What it is worth right now, from the same quote store the
+            // engine values it with — so this page and a stop-out never
+            // disagree about a position's P/L.
+            unrealized: unrealizedPnL(mapPositionToCamel(p) as any) ?? null,
+        }));
+
+        res.json({ success: true, data: rows });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/** Force a simulated position closed at the current market. */
+export const adminClosePosition = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { data: pos, error } = await supabase
+            .from('positions')
+            .select('id, user_id, symbol, side, volume, status, venue')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        if (!pos) return res.status(404).json({ success: false, message: 'Position not found.' });
+        if (pos.status !== 'OPEN') return res.status(409).json({ success: false, message: `Position is ${pos.status}.` });
+        if (pos.venue === 'CTRADER') {
+            return res.status(409).json({
+                success: false,
+                message: 'This position lives at the broker. Close it there — closing the mirror would leave the real one open.',
+            });
+        }
+
+        const result = await closeSimulatedAtMarket(String(pos.user_id), String(pos.id), 'ADMIN_CLOSE');
+        if (result.status !== 200) {
+            return res.status(result.status).json(result.body);
+        }
+
+        recordAdminAction(req, {
+            action: 'position.close',
+            targetType: 'position', targetId: String(pos.id),
+            summary: `Force-closed ${pos.side} ${pos.volume} ${pos.symbol}`,
+            detail: { userId: pos.user_id, symbol: pos.symbol, side: pos.side, volume: pos.volume },
+        });
+
+        res.json({ success: true, message: 'Position closed.', data: result.body });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  REVIEWS — all of them, not only the pending ones
+// ═══════════════════════════════════════════════════════════
+
+export const listAllReviews = async (req: AuthRequest, res: Response) => {
+    try {
+        const scope = String(req.query.scope || 'pending');
+        let q = supabase
+            .from('broker_reviews')
+            .select('*, users (id, username), brokers (id, name)')
+            .order('created_at', { ascending: false })
+            .limit(200);
+
+        if (scope === 'pending') q = q.eq('is_approved', false);
+        else if (scope === 'approved') q = q.eq('is_approved', true);
+
+        const { data, error } = await q;
+        if (error) return res.status(500).json({ success: false, message: error.message });
+
+        res.json({
+            success: true,
+            data: (data || []).map((r: any) => ({
+                ...mapBrokerReviewToCamel(r),
+                userId: { id: r.users?.id || r.user_id, username: r.users?.username || 'user' },
+                brokerId: { id: r.brokers?.id || r.broker_id, name: r.brokers?.name || 'broker' },
+            })),
+        });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  BROKERS — including the deactivated ones, so they can come back
+// ═══════════════════════════════════════════════════════════
+
+export const listAllBrokers = async (req: AuthRequest, res: Response) => {
+    try {
+        const includeInactive = String(req.query.includeInactive || '') === '1';
+        let q = supabase
+            .from('brokers')
+            .select('*')
+            .order('ranking', { ascending: false })
+            .order('rating', { ascending: false });
+        if (!includeInactive) q = q.eq('is_active', true);
+
+        const { data, error } = await q;
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        res.json({ success: true, data: (data || []).map(mapBrokerToCamel) });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/** Undo a soft delete. */
+export const restoreBroker = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { data: broker, error } = await supabase
+            .from('brokers')
+            .update({ is_active: true })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error || !broker) return res.status(404).json({ success: false, message: 'Broker not found.' });
+
+        recordAdminAction(req, {
+            action: 'broker.restore', targetType: 'broker', targetId: String(id),
+            summary: `Restored broker ${broker.name}`,
+        });
+
+        res.json({ success: true, message: `Broker ${broker.name} restored.`, data: mapBrokerToCamel(broker) });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  AUDIT LOG
+// ═══════════════════════════════════════════════════════════
+
+export const getAuditLog = async (req: AuthRequest, res: Response) => {
+    try {
+        const entries = await readAuditLog({
+            limit: Number(req.query.limit) || 60,
+            before: req.query.before ? String(req.query.before) : undefined,
+            action: req.query.action ? String(req.query.action) : undefined,
+        });
+        res.json({ success: true, data: entries });
+    } catch (error: any) {
+        // A missing table is the normal answer before the migration is run,
+        // and it must not look like the page is broken.
+        res.status(200).json({ success: true, data: [], note: error.message });
     }
 };

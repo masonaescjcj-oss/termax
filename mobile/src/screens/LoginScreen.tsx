@@ -17,7 +17,7 @@ import axios from 'axios';
 import { useAccountStore } from '../store/accountStore';
 import { supabase } from '../lib/supabase';
 
-import { BACKEND_URL, isTelegram, getTgSafeAreaTop } from '../config';
+import { BACKEND_URL, isTelegram, getTgSafeAreaTop, ADMIN_CONSOLE_URL } from '../config';
 import { useLogs } from '../utils/logger';
 import { AVAILABLE_FONTS, loadAndApplyFont } from '../utils/fontManager';
 
@@ -1237,11 +1237,15 @@ export default function LoginScreen() {
         </TouchableOpacity>
       </BlurView>
 
-      {userProfile?.role === 'admin' && (
-        <TouchableOpacity onPress={() => navigation.navigate('Admin')} style={{ width: '100%', marginBottom: 16 }}>
+      {/* The admin panel is a separate site now — see admin/ in the repo.
+          Keeping a whole moderation surface inside the trading app meant
+          every user shipped code they could never open. This is a link out,
+          and only when a console address has been configured. */}
+      {userProfile?.role === 'admin' && !!ADMIN_CONSOLE_URL && (
+        <TouchableOpacity onPress={() => Linking.openURL(ADMIN_CONSOLE_URL)} style={{ width: '100%', marginBottom: 16 }}>
           <LinearGradient colors={['#2962FF', '#1E40AF']} style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
             <ShieldCheck color="#FFF" size={20} style={{ marginRight: 8 }} />
-            <Text style={styles.connectBtnText}>Open Admin Panel</Text>
+            <Text style={styles.connectBtnText}>Open Admin Console</Text>
           </LinearGradient>
         </TouchableOpacity>
       )}

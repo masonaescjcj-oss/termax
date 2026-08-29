@@ -136,6 +136,103 @@ check('the identifier is passed as a value', ilike.length > 0, true);
 check('and passed whole, not spliced into syntax', ilike[0]?.args[1], injection);
 check('a user that does not exist is reported as such', asgRes.statusCode, 404);
 
+// ── the new admin actions refuse what they should ────────────────────
+section('the moderation actions hold their limits');
+
+// A stub that records the query it was asked to build and answers with
+// whatever the current scenario says. It is thenable, because the search
+// handler awaits the chain itself rather than a terminal method.
+let scenario: Record<string, any> = {};
+let built: { method: string; args: any[] }[] = [];
+
+function chainFor(table: string): any {
+    const chain: any = new Proxy({}, {
+        get: (_t, prop: string) => {
+            if (prop === 'then') {
+                return (resolve: any) => resolve(scenario[`${table}:list`] ?? { data: [], count: 0, error: null });
+            }
+            if (prop === 'maybeSingle' || prop === 'single') {
+                return async () => scenario[`${table}:one`] ?? { data: null, error: null };
+            }
+            return (...args: any[]) => { built.push({ method: prop, args }); return chain; };
+        },
+    });
+    return chain;
+}
+(supabase as any).from = (table: string) => { built.push({ method: 'from', args: [table] }); return chainFor(table); };
+
+const run = async (handler: any, req: any) => {
+    built = [];
+    const res = fakeRes();
+    await handler(req, res as any);
+    return res;
+};
+
+// A live balance is the broker's number; writing it here would only make
+// our copy lie.
+scenario = { 'users:one': { data: {
+    id: 'u1', username: 'reza',
+    ctrader_accounts: [
+        { cTraderId: 'default_demo', accountType: 'DEMO', balance: 1000 },
+        { cTraderId: '5021884', accountType: 'LIVE', balance: 4200 },
+    ],
+}, error: null } };
+
+let r = await run(admin.setAccountBalance, { body: { userId: 'u1', accountId: '5021884', balance: 9999 }, user: { id: 'me' } });
+check('a live balance cannot be set from here', r.statusCode, 409);
+
+r = await run(admin.setAccountBalance, { body: { userId: 'u1', accountId: 'default_demo', balance: -5 }, user: { id: 'me' } });
+check('a negative balance is refused', r.statusCode, 400);
+
+r = await run(admin.setAccountBalance, { body: { userId: 'u1', accountId: 'default_demo', balance: 50_000_000 }, user: { id: 'me' } });
+check('an implausible balance is refused', r.statusCode, 400);
+
+r = await run(admin.setAccountBalance, { body: { userId: 'u1', accountId: 'nope', balance: 100 }, user: { id: 'me' } });
+check('an account the user does not have is a 404', r.statusCode, 404);
+
+r = await run(admin.setAccountBalance, { body: { userId: 'u1', accountId: 'default_demo', balance: 2500 }, user: { id: 'me' } });
+check('a demo balance goes through', r.statusCode, 200);
+
+// Suspending yourself locks you out of the console you are standing in.
+scenario = { 'users:one': { data: { id: 'me', username: 'sina', role: 'admin', settings: {} }, error: null } };
+r = await run(admin.setUserActive, { body: { userId: 'me', active: false }, user: { id: 'me' } });
+check('you cannot suspend your own account', r.statusCode, 409);
+
+r = await run(admin.setUserActive, { body: { userId: 'me', active: true }, user: { id: 'me' } });
+check('but you can restore one', r.statusCode, 200);
+
+// A broker-held position is a mirror. Closing the mirror leaves the real
+// position open at the broker with nothing tracking it.
+scenario = { 'positions:one': { data: {
+    id: 'p1', user_id: 'u1', symbol: 'GOLD', side: 'SELL', volume: 0.1, status: 'OPEN', venue: 'CTRADER',
+}, error: null } };
+r = await run(admin.adminClosePosition, { params: { id: 'p1' }, user: { id: 'me' } });
+check('a broker-held position is not closed from here', r.statusCode, 409);
+
+scenario = { 'positions:one': { data: {
+    id: 'p2', user_id: 'u1', symbol: 'EUR/USD', side: 'BUY', volume: 1, status: 'CLOSED', venue: 'SIMULATED',
+}, error: null } };
+r = await run(admin.adminClosePosition, { params: { id: 'p2' }, user: { id: 'me' } });
+check('an already closed position is not closed twice', r.statusCode, 409);
+
+// The user search puts its input into a PostgREST `or` filter, where a
+// comma is syntax. It has to be neutered on the way in.
+scenario = { 'users:list': { data: [], count: 0, error: null } };
+await run(admin.searchUsers, { query: { q: 'reza,role.eq.admin' }, user: { id: 'me' } });
+const orCall = built.find(c => c.method === 'or');
+check('the search still builds an or filter', !!orCall, true);
+
+// A comma is what separates one condition from the next in a PostgREST
+// `or`, so the test that matters is not whether the words survive — they
+// do, harmlessly, inside the pattern — but whether the caller can add a
+// separator. The filter must contain exactly the two conditions this code
+// wrote, and no third.
+const conditions = String(orCall?.args[0] ?? '').split(',');
+check('the filter has exactly the two conditions we wrote', conditions.length, 2);
+check('the first is the username match', conditions[0]?.startsWith('username.ilike.'), true);
+check('the second is the email match', conditions[1]?.startsWith('email.ilike.'), true);
+check('and the typed text survives as a value', conditions[0]?.includes('reza'), true);
+
 // ── report ───────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(64)}`);
 if (failures.length) {
