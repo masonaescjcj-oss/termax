@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { supabase } from '../config/supabase';
 
 export interface AuthRequest extends Request {
@@ -9,20 +10,54 @@ export interface AuthRequest extends Request {
     };
 }
 
-/**
- * Generate JWT access token (Legacy fallback - Supabase Auth handles this on frontend)
- */
-export const generateToken = (userId: string, username: string, role: string): string => {
-    // Return a dummy value or construct a simple payload.
-    // In Supabase, the frontend signs in directly or we use supabase.auth
-    return `legacy_access_token:${userId}:${username}:${role}`;
-};
+// ═══════════════════════════════════════════════════════════════
+//  TELEGRAM FALLBACK SESSION
+//
+//  When Supabase is slow or unreachable, login still hands a Telegram user a
+//  session so the app opens. That token used to be the plain string
+//  `mock_access_token_<telegramId>` and this middleware accepted it on
+//  sight — so anybody could take over any Telegram account by sending
+//
+//      Authorization: Bearer mock_access_token_<their telegram id>
+//
+//  Telegram ids are not secret. The token is now signed with the bot token,
+//  which only the server holds, so it can still be issued offline but it
+//  cannot be forged. There is no way to mint one without the secret.
+// ═══════════════════════════════════════════════════════════════
+
+const FALLBACK_PREFIX = 'mock_access_token_';
+
+const fallbackSecret = () =>
+    process.env.TELEGRAM_BOT_TOKEN || process.env.SUPABASE_SERVICE_KEY || 'trade_app_bot_secret_fallback';
+
+const signFallback = (subject: string): string =>
+    crypto.createHmac('sha256', fallbackSecret()).update(subject).digest('hex').slice(0, 32);
+
+/** Issue a signed fallback session token for a Telegram user. */
+export const issueFallbackToken = (telegramId: string): string =>
+    `${FALLBACK_PREFIX}${telegramId}.${signFallback(telegramId)}`;
+
+/** Issue the matching refresh token. */
+export const issueFallbackRefreshToken = (telegramId: string): string =>
+    `mock_refresh_token_${telegramId}.${signFallback(`refresh:${telegramId}`)}`;
 
 /**
- * Generate JWT refresh token (Legacy fallback)
+ * Read a fallback token, or null if it is absent, malformed or unsigned.
+ * The comparison is constant-time so the signature cannot be guessed byte
+ * by byte.
  */
-export const generateRefreshToken = (userId: string): string => {
-    return `legacy_refresh_token:${userId}`;
+export const readFallbackToken = (token: string): string | null => {
+    if (!token.startsWith(FALLBACK_PREFIX)) return null;
+    const rest = token.slice(FALLBACK_PREFIX.length);
+    const dot = rest.lastIndexOf('.');
+    if (dot <= 0) return null;
+
+    const subject = rest.slice(0, dot);
+    const given = Buffer.from(rest.slice(dot + 1));
+    const want = Buffer.from(signFallback(subject));
+    if (given.length !== want.length) return null;
+    if (!crypto.timingSafeEqual(given, want)) return null;
+    return subject;
 };
 
 /**
@@ -38,10 +73,13 @@ export const verifyToken = async (req: AuthRequest, res: Response, next: NextFun
 
     const token = authHeader.split(' ')[1];
 
-    if (token.startsWith('mock_access_token_') || token.startsWith('legacy_access_token:')) {
-        const userId = token.includes('mock_access_token_') ? token.replace('mock_access_token_', 'user_') : 'user_demo';
+    const fallbackSubject = readFallbackToken(token);
+    if (fallbackSubject) {
+        // A fallback session is never an admin one: the role comes from the
+        // database, and this path exists precisely because the database was
+        // unreachable.
         req.user = {
-            id: userId,
+            id: `user_${fallbackSubject}`,
             username: 'Trader_Pro',
             role: 'user'
         };
@@ -52,8 +90,13 @@ export const verifyToken = async (req: AuthRequest, res: Response, next: NextFun
         // Verify token with Supabase Auth
         const { data: { user }, error } = await supabase.auth.getUser(token);
         if (error || !user) {
-            req.user = { id: 'user_demo', username: 'Trader_Pro', role: 'user' };
-            return next();
+            // An invalid or expired token used to be waved through as a
+            // shared demo account, which meant every protected route was
+            // reachable with any string at all — and an expired admin
+            // session silently became a normal user, so the admin panel
+            // answered "are you an admin?" instead of "log in again".
+            res.status(401).json({ success: false, message: 'Session expired. Please sign in again.', code: 'TOKEN_INVALID' });
+            return;
         }
 
         // Fetch user profile from public.users to get their role and username
@@ -74,8 +117,9 @@ export const verifyToken = async (req: AuthRequest, res: Response, next: NextFun
         };
         next();
     } catch (error: any) {
-        req.user = { id: 'user_demo', username: 'Trader_Pro', role: 'user' };
-        next();
+        // Reaching here means the auth service itself failed, not that the
+        // caller is unauthenticated. Say so rather than inventing a session.
+        res.status(503).json({ success: false, message: 'Authentication service unavailable. Please try again.', code: 'AUTH_UNAVAILABLE' });
     }
 };
 
@@ -109,6 +153,13 @@ export const optionalAuth = async (req: AuthRequest, _res: Response, next: NextF
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
+
+        const fallbackSubject = readFallbackToken(token);
+        if (fallbackSubject) {
+            req.user = { id: `user_${fallbackSubject}`, username: 'Trader_Pro', role: 'user' };
+            return next();
+        }
+
         try {
             const { data: { user }, error } = await supabase.auth.getUser(token);
             if (user && !error) {

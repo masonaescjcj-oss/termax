@@ -96,7 +96,7 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
     try {
         const { data: users, error } = await supabase
             .from('users')
-            .select('id, username, email, role, avatar_url, created_at')
+            .select('id, username, email, role, plan, avatar_url, created_at')
             .order('created_at', { ascending: false })
             .limit(100);
 
@@ -139,6 +139,23 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: 'userId and valid role required.' });
         }
 
+        // Demoting the last admin locks the panel for everyone, permanently
+        // and from inside the panel itself — there is no route back in
+        // without direct database access. Refuse it.
+        if (role !== 'admin') {
+            const { data: admins } = await supabase
+                .from('users')
+                .select('id')
+                .eq('role', 'admin');
+            const remaining = (admins || []).filter((a: any) => a.id !== userId);
+            if (!remaining.length) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'This is the only admin left. Promote someone else first.',
+                });
+            }
+        }
+
         const { data: user, error } = await supabase
             .from('users')
             .update({ role })
@@ -165,9 +182,14 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
 // ═══════════════════════════════════════════════════════════
 export const listBrokers = async (req: AuthRequest, res: Response) => {
     try {
+        // Deleting a broker is a soft delete (is_active = false). Without
+        // this filter the admin list kept showing brokers that had already
+        // been removed from the public directory, so deleting one looked
+        // like it had done nothing at all.
         const { data: brokers, error } = await supabase
             .from('brokers')
             .select('*')
+            .eq('is_active', true)
             .order('ranking', { ascending: false })
             .order('rating', { ascending: false })
             .order('created_at', { ascending: false });
@@ -393,12 +415,32 @@ export const assignCommunityAdmin = async (req: AuthRequest, res: Response) => {
 
         if (comErr || !community) return res.status(404).json({ success: false, message: 'Community not found.' });
 
-        // Find user by username or email
-        const { data: targetUser } = await supabase
+        // Find user by username or email.
+        //
+        // This was interpolated straight into a PostgREST `.or()` filter,
+        // where a comma or parenthesis in the identifier is syntax: an
+        // identifier like `x,role.eq.admin` added a condition of the
+        // caller's choosing to the query. It also lower-cased the input
+        // before an exact match, so any user whose username carries a
+        // capital could never be found. Two case-insensitive equality
+        // matches, with the value passed as a value, do the same job with
+        // neither problem.
+        const identifier = String(targetUserIdentifier).trim();
+        if (!identifier || identifier.length > 254) {
+            return res.status(400).json({ success: false, message: 'Username or email required.' });
+        }
+
+        const byUsername = await supabase
             .from('users')
             .select('id, username')
-            .or(`username.eq.${targetUserIdentifier.toLowerCase()},email.eq.${targetUserIdentifier.toLowerCase()}`)
+            .ilike('username', identifier)
             .maybeSingle();
+
+        const targetUser = byUsername.data ?? (await supabase
+            .from('users')
+            .select('id, username')
+            .ilike('email', identifier)
+            .maybeSingle()).data;
 
         if (!targetUser) return res.status(404).json({ success: false, message: 'User not found in system.' });
 
@@ -636,6 +678,18 @@ export const deleteReview = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/**
+ * A lottie key becomes a filename, so it must not be able to be a path.
+ * `key` arrives from the request; without this, `nft_../../../x` wrote and
+ * deleted `.json` files anywhere the process could reach.
+ */
+const safeLottieKey = (raw: unknown): string | null => {
+    const key = String(raw ?? '').trim();
+    if (!key || key.length > 64) return null;
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) return null;
+    return key;
+};
+
 const getLottiesFilePath = () => {
     const dir = path.join(__dirname, '../../public/uploads/lotties');
     if (!fs.existsSync(dir)) {
@@ -666,7 +720,11 @@ export const uploadLottie = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: 'Missing name, key or lottieJson' });
         }
 
-        const cleanKey = key.startsWith('nft_') ? key : `nft_${key}`;
+        const safeKey = safeLottieKey(key);
+        if (!safeKey) {
+            return res.status(400).json({ success: false, message: 'Key may contain only letters, numbers, dash and underscore.' });
+        }
+        const cleanKey = safeKey.startsWith('nft_') ? safeKey : `nft_${safeKey}`;
         const { dir, file } = getLottiesFilePath();
 
         // Write the individual lottie file
@@ -698,7 +756,10 @@ export const uploadLottie = async (req: AuthRequest, res: Response) => {
 
 export const deleteLottie = async (req: AuthRequest, res: Response) => {
     try {
-        const { key } = req.params;
+        const key = safeLottieKey(req.params.key);
+        if (!key) {
+            return res.status(400).json({ success: false, message: 'Invalid lottie key.' });
+        }
         const { dir, file } = getLottiesFilePath();
 
         const content = fs.readFileSync(file, 'utf8');
@@ -723,10 +784,31 @@ export const deleteLottie = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/**
+ * The AI provider settings, without the keys.
+ *
+ * A key that is sent to the client can be read from the client, and this
+ * response used to carry the live provider key in plaintext on every visit
+ * to the AI tab. The panel does not need to read a key to replace one, so
+ * it is told whether a key is set and nothing more.
+ */
 export const getAIConfig = async (req: AuthRequest, res: Response) => {
     try {
         const config = await loadAIConfig();
-        res.json({ success: true, config });
+        res.json({
+            success: true,
+            config: {
+                activeProvider: config.activeProvider,
+                baseUrl: config.baseUrl,
+                modelName: config.modelName,
+                fallbackBaseUrl: config.fallbackBaseUrl,
+                fallbackModelName: config.fallbackModelName,
+                apiKey: '',
+                fallbackApiKey: '',
+                hasApiKey: Boolean(config.apiKey),
+                hasFallbackApiKey: Boolean(config.fallbackApiKey),
+            },
+        });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -735,23 +817,50 @@ export const getAIConfig = async (req: AuthRequest, res: Response) => {
 export const updateAIConfig = async (req: AuthRequest, res: Response) => {
     try {
         const { activeProvider, apiKey, baseUrl, modelName, fallbackApiKey, fallbackBaseUrl, fallbackModelName } = req.body;
-        
-        if (!activeProvider || !apiKey || !baseUrl || !modelName) {
-            return res.status(400).json({ success: false, message: 'Missing required configuration fields' });
+
+        // The panel is never sent the current keys, so a blank key here means
+        // "leave the one you have" — not "erase it". Requiring a key on every
+        // save would have forced the admin to retype it to change a model
+        // name, which is how keys end up pasted into places they shouldn't be.
+        const current = await loadAIConfig();
+        const nextKey = typeof apiKey === 'string' && apiKey.trim() ? apiKey.trim() : current.apiKey;
+        const nextFallbackKey = typeof fallbackApiKey === 'string' && fallbackApiKey.trim()
+            ? fallbackApiKey.trim()
+            : current.fallbackApiKey;
+
+        if (!activeProvider || !baseUrl || !modelName) {
+            return res.status(400).json({ success: false, message: 'Provider, base URL and model name are required.' });
         }
-        
+        if (!nextKey) {
+            return res.status(400).json({ success: false, message: 'An API key is required — none is stored yet.' });
+        }
+
         const updatedConfig: AIConfig = {
             activeProvider,
-            apiKey,
+            apiKey: nextKey,
             baseUrl,
             modelName,
-            fallbackApiKey: fallbackApiKey || '',
+            fallbackApiKey: nextFallbackKey || '',
             fallbackBaseUrl: fallbackBaseUrl || 'https://api.openai.com/v1',
             fallbackModelName: fallbackModelName || 'gpt-4o'
         };
-        
+
         await saveAIConfig(updatedConfig);
-        res.json({ success: true, message: 'AI configuration updated successfully', config: updatedConfig });
+        res.json({
+            success: true,
+            message: 'AI configuration updated successfully',
+            config: {
+                activeProvider: updatedConfig.activeProvider,
+                baseUrl: updatedConfig.baseUrl,
+                modelName: updatedConfig.modelName,
+                fallbackBaseUrl: updatedConfig.fallbackBaseUrl,
+                fallbackModelName: updatedConfig.fallbackModelName,
+                apiKey: '',
+                fallbackApiKey: '',
+                hasApiKey: Boolean(updatedConfig.apiKey),
+                hasFallbackApiKey: Boolean(updatedConfig.fallbackApiKey),
+            },
+        });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }

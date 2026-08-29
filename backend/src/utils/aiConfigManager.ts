@@ -36,7 +36,15 @@ export const loadAIConfig = async (): Promise<AIConfig> => {
         if (!stored.fallbackApiKey) delete stored.fallbackApiKey;
         return { ...DEFAULT_CONFIG, ...stored };
     } catch (e) {
-        await saveAIConfig(DEFAULT_CONFIG);
+        // Writing the default back is a convenience, not the job. On a
+        // read-only or missing directory the write throws too, and letting
+        // that escape turned "no config file yet" into a 500 that bounced
+        // the admin straight out of the panel.
+        try {
+            await saveAIConfig(DEFAULT_CONFIG);
+        } catch {
+            // Fall through with the in-memory default.
+        }
         return DEFAULT_CONFIG;
     }
 };

@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { supabase } from '../config/supabase';
-import { AuthRequest } from '../middleware/auth';
+import { AuthRequest, issueFallbackToken, issueFallbackRefreshToken } from '../middleware/auth';
 import { mapUserToCamel, mapUserToSnake } from '../utils/mapper';
 import crypto from 'crypto';
 
@@ -49,8 +49,10 @@ export const getFallbackUserResponse = (telegramId?: any, username?: string) => 
         }]
     };
     return {
-        accessToken: `mock_access_token_${tgIdStr}`,
-        refreshToken: `mock_refresh_token_${tgIdStr}`,
+        // Signed, so this offline session cannot be minted by anyone who
+        // simply knows the Telegram id — see middleware/auth.ts.
+        accessToken: issueFallbackToken(tgIdStr),
+        refreshToken: issueFallbackRefreshToken(tgIdStr),
         user
     };
 };

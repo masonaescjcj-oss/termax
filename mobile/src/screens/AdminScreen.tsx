@@ -9,8 +9,7 @@ import GlassView from '../components/GlassView';
 const BlurView = GlassView;
 import CustomBlurModal from '../components/CustomBlurModal';
 import axios from 'axios';
-import { colors, colors as defaultColors } from '../theme/colors';
-import { useTheme } from '../theme/ThemeContext';
+import { darkColors, colors as defaultColors } from '../theme/colors';
 import { BACKEND_URL, getTgSafeAreaTop, isTelegram } from '../config';
 import { getItemAsync } from '../utils/storage';
 import LottieView from 'lottie-react-native';
@@ -36,10 +35,19 @@ const getLottieSource = (key: string | null | undefined) => {
 };
 
 export default function AdminScreen({ navigation }: any) {
-    const { colors, isDark } = useTheme();
+    // The panel's chrome is dark by construction: every card in the
+    // stylesheet is a white alpha over a black ground, and the stylesheet
+    // reads the static dark palette. Half the screen's text, though, was
+    // drawn from the live theme — so on a phone set to light mode the
+    // labels came out near-black (#0F172A) on black and could not be read
+    // at all. The theme follows the system scheme by default, so that is
+    // not a rare setting. Pinning the panel to the dark palette makes the
+    // two halves agree.
+    const colors = darkColors;
+    const isDark = true;
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any>(null);
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'brokers' | 'communities' | 'symbols' | 'users' | 'campaigns' | 'lotties' | 'ai-config'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'brokers' | 'communities' | 'symbols' | 'users' | 'reviews' | 'campaigns' | 'lotties' | 'ai-config'>('dashboard');
     const [customLotties, setCustomLotties] = useState<any[]>([]);
     const [isLottieModalOpen, setIsLottieModalOpen] = useState(false);
     const [lottieForm, setLottieForm] = useState({ name: '', key: '', lottieJson: '' });
@@ -58,6 +66,13 @@ export default function AdminScreen({ navigation }: any) {
     const [symbols, setSymbols] = useState<any[]>([]);
     const [users, setUsers] = useState<any[]>([]);
     const [campaigns, setCampaigns] = useState<any[]>([]);
+    const [reviews, setReviews] = useState<any[]>([]);
+    // What went wrong on the current tab. A failure used to close the whole
+    // panel; it now stays on screen with something to press.
+    const [loadError, setLoadError] = useState<string | null>(null);
+    // Whether the server already holds an AI key. The key itself is never
+    // sent to the client, so the field is a replace-it box, not an edit box.
+    const [aiKeySet, setAiKeySet] = useState({ primary: false, fallback: false });
 
     // Modals state
     const [isBrokerModalOpen, setIsBrokerModalOpen] = useState(false);
@@ -66,6 +81,9 @@ export default function AdminScreen({ navigation }: any) {
     const [isUserRoleModalOpen, setIsUserRoleModalOpen] = useState(false);
     const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
     const [editingBrokerId, setEditingBrokerId] = useState<string | null>(null);
+    // The symbol modal used to share editingBrokerId with the broker modal,
+    // so the two forms could each decide the other was mid-edit.
+    const [editingSymbolId, setEditingSymbolId] = useState<string | null>(null);
     const [editingCommunityId, setEditingCommunityId] = useState<string | null>(null);
     const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
 
@@ -147,6 +165,9 @@ export default function AdminScreen({ navigation }: any) {
             } else if (activeTab === 'users') {
                 const res = await axios.get(`${BACKEND_URL}/api/v1/admin/users`, { headers });
                 setUsers(res.data.data);
+            } else if (activeTab === 'reviews') {
+                const res = await axios.get(`${BACKEND_URL}/api/v1/admin/reviews`, { headers });
+                setReviews(res.data.data || []);
             } else if (activeTab === 'campaigns') {
                 const res = await axios.get(`${BACKEND_URL}/api/v1/campaigns/admin/list`, { headers });
                 setCampaigns(res.data.campaigns);
@@ -158,13 +179,43 @@ export default function AdminScreen({ navigation }: any) {
             } else if (activeTab === 'ai-config') {
                 const res = await axios.get(`${BACKEND_URL}/api/v1/admin/ai-config`, { headers });
                 if (res.data.success && res.data.config) {
-                    setAiForm(res.data.config);
+                    const c = res.data.config;
+                    setAiForm({
+                        activeProvider: c.activeProvider || 'nara',
+                        baseUrl: c.baseUrl || '',
+                        modelName: c.modelName || '',
+                        fallbackBaseUrl: c.fallbackBaseUrl || '',
+                        fallbackModelName: c.fallbackModelName || '',
+                        // Left blank on purpose: the server does not hand out
+                        // the stored keys, and a blank field means "keep it".
+                        apiKey: '',
+                        fallbackApiKey: '',
+                    });
+                    setAiKeySet({ primary: !!c.hasApiKey, fallback: !!c.hasFallbackApiKey });
                 }
             }
+            setLoadError(null);
         } catch (err: any) {
+            // One failed request used to close the panel outright, with a
+            // message blaming the admin's role for what was usually a 500 or
+            // a dropped connection. Only an answer that actually says "not
+            // you" sends anyone away.
             console.log(err.response?.data || err);
-            Alert.alert('Error', 'Failed to fetch data. Are you an admin?');
-            navigation.goBack();
+            const status = err.response?.status;
+            if (status === 401 || status === 403) {
+                Alert.alert(
+                    status === 401 ? 'Session expired' : 'Not an admin',
+                    status === 401
+                        ? 'Please sign in again.'
+                        : 'This account does not have admin access.',
+                );
+                navigation.goBack();
+                return;
+            }
+            setLoadError(
+                err.response?.data?.message ||
+                (status ? `The server answered ${status}.` : 'Could not reach the server.')
+            );
         } finally {
             setLoading(false);
         }
@@ -189,7 +240,7 @@ export default function AdminScreen({ navigation }: any) {
 
     const renderTabs = () => (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
-            {['dashboard', 'brokers', 'communities', 'symbols', 'users', 'campaigns', 'lotties', 'ai-config'].map((tab) => (
+            {['dashboard', 'brokers', 'communities', 'symbols', 'users', 'reviews', 'campaigns', 'lotties', 'ai-config'].map((tab) => (
                 <TouchableOpacity key={tab} style={[styles.tabBtn, activeTab === tab && styles.activeTabBtn]} onPress={() => setActiveTab(tab as any)}>
                     <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{tab.toUpperCase()}</Text>
                 </TouchableOpacity>
@@ -219,6 +270,49 @@ export default function AdminScreen({ navigation }: any) {
                 <Text style={styles.statValue}>{stats?.totalPromoted || 0}</Text>
                 <Text style={styles.statLabel}>Promoted</Text>
             </View>
+            {/* Both of these were already in the response and drawn nowhere. */}
+            <View style={styles.statCard}>
+                <Zap color={colors.primary} size={24} style={{ marginBottom: 8 }} />
+                <Text style={styles.statValue}>{stats?.totalPositions || 0}</Text>
+                <Text style={styles.statLabel}>Open Positions</Text>
+            </View>
+            <TouchableOpacity style={styles.statCard} onPress={() => setActiveTab('reviews')}>
+                <Award color={stats?.pendingReviews ? colors.warning : colors.textMuted} size={24} style={{ marginBottom: 8 }} />
+                <Text style={styles.statValue}>{stats?.pendingReviews || 0}</Text>
+                <Text style={styles.statLabel}>Pending Reviews</Text>
+            </TouchableOpacity>
+        </View>
+    );
+
+    const renderReviews = () => (
+        <View>
+            {reviews.length === 0 ? (
+                <Text style={{ color: colors.textMuted, fontStyle: 'italic', padding: 20, textAlign: 'center' }}>
+                    No reviews are waiting for approval.
+                </Text>
+            ) : reviews.map(r => (
+                <View key={r._id} style={[styles.listItem, { alignItems: 'flex-start' }]}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                        <Text style={styles.itemTitle}>
+                            {r.brokerId?.name || 'Broker'} {'★'.repeat(Math.max(0, Math.min(5, Math.round(r.rating || 0))))}
+                        </Text>
+                        <Text style={styles.itemSub}>by {r.userId?.username || 'user'}</Text>
+                        {!!r.comment && (
+                            <Text style={{ color: colors.text, fontSize: 12, marginTop: 6 }} numberOfLines={4}>
+                                {r.comment}
+                            </Text>
+                        )}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 12, paddingTop: 4 }}>
+                        <TouchableOpacity onPress={() => handleAction('post', `reviews/${r._id}/approve`)}>
+                            <CheckCircle color={colors.success} size={20} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleAction('delete', `reviews/${r._id}`)}>
+                            <Trash2 color={colors.danger} size={20} />
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            ))}
         </View>
     );
 
@@ -297,7 +391,7 @@ export default function AdminScreen({ navigation }: any) {
 
     const renderSymbols = () => (
         <View>
-            <TouchableOpacity style={styles.addBtn} onPress={() => { setEditingBrokerId(null); setSymbolForm({ symbol: '', name: '', description: '', price: '0', brokerUrl: '', isPinned: false, imageUrl: '', high: '', low: '', changePct: '', showMetrics: false }); setIsSymbolModalOpen(true); }}>
+            <TouchableOpacity style={styles.addBtn} onPress={() => { setEditingSymbolId(null); setSymbolForm({ symbol: '', name: '', description: '', price: '0', brokerUrl: '', isPinned: false, imageUrl: '', high: '', low: '', changePct: '', showMetrics: false }); setIsSymbolModalOpen(true); }}>
                 <Plus color="#FFF" size={20} />
                 <Text style={styles.addBtnText}>Promote Symbol</Text>
             </TouchableOpacity>
@@ -316,7 +410,7 @@ export default function AdminScreen({ navigation }: any) {
                             <Star color={s.isPinned ? colors.warning : colors.textMuted} size={20} />
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => {
-                            setEditingBrokerId(s._id);
+                            setEditingSymbolId(s._id);
                             setSymbolForm({
                                 symbol: s.symbol, name: s.name, description: s.description,
                                 price: s.price?.toString() || '0', brokerUrl: s.brokerUrl || '',
@@ -341,13 +435,26 @@ export default function AdminScreen({ navigation }: any) {
         <View>
             {users.map(u => (
                 <View key={u._id} style={styles.listItem}>
-                    <View>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
                         <Text style={styles.itemTitle}>{u.username}</Text>
-                        <Text style={styles.itemSub}>{u.email} • {u.role}</Text>
+                        <Text style={styles.itemSub} numberOfLines={1}>{u.email} • {u.role}</Text>
                     </View>
-                    <TouchableOpacity onPress={() => { setUserRoleForm({ userId: u._id, role: u.role }); setIsUserRoleModalOpen(true); }} style={styles.actionBtnSmall}>
-                        <Text style={styles.actionBtnTextSmall}>Edit Role</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        {/* Until a payment gateway lands this is the only way
+                            to put anyone on PRO. The endpoint existed from the
+                            start; the panel simply never called it. */}
+                        <TouchableOpacity
+                            onPress={() => handleAction('post', 'users/plan', { userId: u._id, plan: u.plan === 'PRO' ? 'FREE' : 'PRO' })}
+                            style={[styles.actionBtnSmall, u.plan === 'PRO' && { backgroundColor: 'rgba(245,158,11,0.18)' }]}
+                        >
+                            <Text style={[styles.actionBtnTextSmall, u.plan === 'PRO' && { color: colors.warning }]}>
+                                {u.plan === 'PRO' ? 'PRO' : 'FREE'}
+                            </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { setUserRoleForm({ userId: u._id, role: u.role }); setIsUserRoleModalOpen(true); }} style={styles.actionBtnSmall}>
+                            <Text style={styles.actionBtnTextSmall}>Role</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             ))}
         </View>
@@ -655,12 +762,14 @@ export default function AdminScreen({ navigation }: any) {
                 placeholderTextColor={colors.textMuted}
             />
 
-            <Text style={styles.label}>Primary API Key</Text>
+            <Text style={styles.label}>
+                Primary API Key {aiKeySet.primary ? '(one is stored — leave blank to keep it)' : '(none stored yet)'}
+            </Text>
             <TextInput
                 style={styles.input}
                 value={aiForm.apiKey}
                 onChangeText={(text) => setAiForm({ ...aiForm, apiKey: text })}
-                placeholder="sk-..."
+                placeholder={aiKeySet.primary ? '•••••••• stored on the server' : 'sk-...'}
                 secureTextEntry
                 placeholderTextColor={colors.textMuted}
             />
@@ -685,12 +794,14 @@ export default function AdminScreen({ navigation }: any) {
                 placeholderTextColor={colors.textMuted}
             />
 
-            <Text style={styles.label}>Fallback API Key</Text>
+            <Text style={styles.label}>
+                Fallback API Key {aiKeySet.fallback ? '(one is stored — leave blank to keep it)' : '(none stored yet)'}
+            </Text>
             <TextInput
                 style={styles.input}
                 value={aiForm.fallbackApiKey}
                 onChangeText={(text) => setAiForm({ ...aiForm, fallbackApiKey: text })}
-                placeholder="sk-..."
+                placeholder={aiKeySet.fallback ? '•••••••• stored on the server' : 'sk-...'}
                 secureTextEntry
                 placeholderTextColor={colors.textMuted}
             />
@@ -725,6 +836,15 @@ export default function AdminScreen({ navigation }: any) {
 
             {loading ? (
                 <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+            ) : loadError ? (
+                <View style={styles.center}>
+                    <XCircle color={colors.danger} size={36} style={{ marginBottom: 12 }} />
+                    <Text style={{ color: colors.text, fontWeight: 'bold', marginBottom: 6 }}>Could not load {activeTab}</Text>
+                    <Text style={{ color: colors.textMuted, textAlign: 'center', marginBottom: 16, paddingHorizontal: 24 }}>{loadError}</Text>
+                    <TouchableOpacity style={styles.actionBtnSmall} onPress={fetchAdminData}>
+                        <Text style={styles.actionBtnTextSmall}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
             ) : (
                 <ScrollView contentContainerStyle={styles.content}>
                     {activeTab === 'dashboard' && renderDashboard()}
@@ -732,6 +852,7 @@ export default function AdminScreen({ navigation }: any) {
                     {activeTab === 'communities' && renderCommunities()}
                     {activeTab === 'symbols' && renderSymbols()}
                     {activeTab === 'users' && renderUsers()}
+                    {activeTab === 'reviews' && renderReviews()}
                     {activeTab === 'campaigns' && renderCampaigns()}
                     {activeTab === 'lotties' && renderLotties()}
                     {activeTab === 'ai-config' && renderAIConfig()}
@@ -911,7 +1032,7 @@ export default function AdminScreen({ navigation }: any) {
                         ]}
                     >
                         <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-                            <Text style={styles.modalTitle}>Promote Symbol</Text>
+                            <Text style={styles.modalTitle}>{editingSymbolId ? 'Edit Promoted Symbol' : 'Promote Symbol'}</Text>
                             <TextInput style={styles.input} placeholderTextColor={colors.textMuted} placeholder="Symbol (e.g. BTC/USDT)" value={symbolForm.symbol} onChangeText={t => setSymbolForm({...symbolForm, symbol: t})} />
                             <TextInput style={styles.input} placeholderTextColor={colors.textMuted} placeholder="Name (e.g. Bitcoin)" value={symbolForm.name} onChangeText={t => setSymbolForm({...symbolForm, name: t})} />
                             
@@ -940,8 +1061,8 @@ export default function AdminScreen({ navigation }: any) {
                             <View style={styles.modalActions}>
                                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsSymbolModalOpen(false)}><Text style={{ color: defaultColors.text }}>Cancel</Text></TouchableOpacity>
                                 <TouchableOpacity style={styles.submitBtn} onPress={() => {
-                                    const url = editingBrokerId ? `symbols/${editingBrokerId}` : 'symbols';
-                                    const method = editingBrokerId ? 'put' : 'post';
+                                    const url = editingSymbolId ? `symbols/${editingSymbolId}` : 'symbols';
+                                    const method = editingSymbolId ? 'put' : 'post';
                                     const token = getItemAsync('accessToken').then(t => {
                                         axios[method](`${BACKEND_URL}/api/v1/admin/${url}`, { 
                                             ...symbolForm, 
@@ -1320,5 +1441,11 @@ const styles = StyleSheet.create({
     activePickerBtn: { backgroundColor: 'rgba(168, 85, 247, 0.15)', borderColor: defaultColors.primary },
     pickerBtnText: { color: '#64748B', fontSize: 11, fontWeight: 'bold' },
     activePickerBtnText: { color: defaultColors.primary },
-    formContainer: { backgroundColor: 'rgba(255,255,255,0.02)', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: defaultColors.border }
+    formContainer: { backgroundColor: 'rgba(255,255,255,0.02)', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: defaultColors.border },
+
+    // The AI tab referenced both of these and neither existed, so the two
+    // section headings and the Save button's label fell back to the default
+    // dark text and were invisible against the panel's black ground.
+    sectionTitle: { color: defaultColors.text, fontSize: 15, fontWeight: 'bold', marginBottom: 12 },
+    submitBtnText: { color: '#FFFFFF', fontWeight: 'bold', textAlign: 'center' },
 });

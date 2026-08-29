@@ -146,8 +146,15 @@ export const getBrokerReviews = async (req: Request, res: Response) => {
 };
 
 /**
- * INIT MOCK DATA (For Development)
- * POST /api/v1/brokers/init
+ * SEED THE BROKER DIRECTORY
+ * POST /api/v1/brokers/init  (admin only)
+ *
+ * This used to be an unauthenticated route that opened with
+ * `.delete().neq('id', ...)` — a single unauthenticated request wiped every
+ * broker in the database, including everything an admin had added by hand,
+ * and took the reviews attached to them with it. It is now admin-only and
+ * additive: a broker whose slug is already present is left exactly as it is,
+ * so seeding can never destroy curated data.
  */
 export const initMockBrokers = async (req: Request, res: Response) => {
     try {
@@ -184,18 +191,36 @@ export const initMockBrokers = async (req: Request, res: Response) => {
             { name: 'AvaTrade', slug: 'avatrade', rating: 4.7, spreads: 'From 0.9 pips', regulation: 'CBI, ASIC, FSA', features: ['AvaProtect', 'AvaSocial', 'Options Trading'], min_deposit: '$100', max_leverage: '1:400', base_currencies: 'USD, EUR, GBP', platforms: 'MT4, MT5, WebTrader, AvaTradeGO', has_community: true, community_name: 'Ava Social Network' }
         ];
 
-        // Clear existing brokers in Supabase
-        await supabase.from('brokers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        // Add only what is missing. Editing a seeded broker in the admin
+        // panel must survive the next call to this route.
+        const { data: existing, error: readErr } = await supabase
+            .from('brokers')
+            .select('slug');
+
+        if (readErr) {
+            return res.status(500).json({ success: false, message: 'Failed to read brokers', error: readErr.message });
+        }
+
+        const known = new Set((existing || []).map((b: any) => b.slug));
+        const toInsert = mockBrokers.filter(b => !known.has(b.slug));
+
+        if (!toInsert.length) {
+            return res.status(200).json({ success: true, message: 'Broker directory already seeded.', added: 0 });
+        }
 
         const { error } = await supabase
             .from('brokers')
-            .insert(mockBrokers);
+            .insert(toInsert);
 
         if (error) {
             return res.status(500).json({ success: false, message: 'Failed to init brokers', error: error.message });
         }
 
-        res.status(201).json({ success: true, message: 'Mock brokers initialized successfully' });
+        res.status(201).json({
+            success: true,
+            message: `Seeded ${toInsert.length} broker(s); ${known.size} already present were left untouched.`,
+            added: toInsert.length,
+        });
     } catch (error: any) {
         res.status(500).json({ success: false, message: 'Failed to init brokers', error: error.message });
     }
