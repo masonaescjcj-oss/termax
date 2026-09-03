@@ -215,3 +215,9 @@ console.log(`✅ all ${passed} assertions passed`);
 }
 
 main();
+
+// This file uses require() so the environment above is set before the
+// modules load, which leaves it without a top-level import — and TypeScript
+// treats a file with neither import nor export as a global script, sharing
+// one scope with every other one. This makes it a module.
+export {};

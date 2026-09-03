@@ -13,7 +13,7 @@ import {
     searchUsers, getUserDetail, setUserActive, setAccountBalance,
     listOpenPositions, adminClosePosition,
     listAllReviews, listAllBrokers, restoreBroker,
-    getAuditLog
+    getAuditLog, testAIConfig
 } from '../controllers/adminController';
 
 const router = Router();
@@ -80,5 +80,6 @@ router.get('/audit', getAuditLog);
 // AI Config
 router.get('/ai-config', getAIConfig);
 router.post('/ai-config', updateAIConfig);
+router.post('/ai-config/test', testAIConfig);   // try a key before trusting it
 
 export default router;

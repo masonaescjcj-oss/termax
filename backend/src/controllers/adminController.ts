@@ -14,7 +14,9 @@ import {
     mapPromotedSymbolToSnake,
     mapBrokerReviewToCamel
 } from '../utils/mapper';
-import { loadAIConfig, saveAIConfig, AIConfig } from '../utils/aiConfigManager';
+import { loadAIConfig, saveAIConfig, AIConfig, configSource } from '../utils/aiConfigManager';
+import { aiHealth } from '../services/aiHealth';
+import { probeProvider } from '../services/ai/probe';
 import { mapPositionToCamel } from '../utils/mapper';
 import { recordAdminAction, readAuditLog } from '../services/adminAudit';
 import { closeSimulatedAtMarket, invalidateScreenUser } from './tradeController';
@@ -870,7 +872,49 @@ export const getAIConfig = async (req: AuthRequest, res: Response) => {
                 hasApiKey: Boolean(config.apiKey),
                 hasFallbackApiKey: Boolean(config.fallbackApiKey),
             },
+            // Where the running config actually comes from. 'environment'
+            // means nothing has been saved and the app is on its build-time
+            // key; 'legacy-file' means it is on a file that the next deploy
+            // will delete.
+            source: configSource(),
+            health: aiHealth(),
         });
+    } catch (error: any) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Try a configuration against the provider without storing it.
+ *
+ * Pasting a key, saving, and learning from a user's complaint that it was
+ * wrong is the loop this closes. A blank key here means "test the one
+ * already stored", so an admin can also ask "is the current key alive?".
+ */
+export const testAIConfig = async (req: AuthRequest, res: Response) => {
+    try {
+        const { apiKey, baseUrl, modelName, target } = req.body || {};
+        const current = await loadAIConfig();
+
+        const useFallback = target === 'fallback';
+        const candidate = {
+            apiKey: (typeof apiKey === 'string' && apiKey.trim())
+                ? apiKey.trim()
+                : (useFallback ? current.fallbackApiKey || '' : current.apiKey),
+            baseUrl: String(baseUrl || (useFallback ? current.fallbackBaseUrl : current.baseUrl) || ''),
+            modelName: String(modelName || (useFallback ? current.fallbackModelName : current.modelName) || ''),
+        };
+
+        const result = await probeProvider(candidate);
+
+        recordAdminAction(req, {
+            action: 'ai.test', targetType: 'config', targetId: 'ai',
+            summary: `Tested the ${useFallback ? 'fallback' : 'primary'} AI provider — ${result.ok ? 'answered' : 'failed'}`,
+            // Never the key, only what happened.
+            detail: { target: useFallback ? 'fallback' : 'primary', ok: result.ok, latencyMs: result.latencyMs, model: candidate.modelName },
+        });
+
+        res.json({ success: true, result });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -907,7 +951,7 @@ export const updateAIConfig = async (req: AuthRequest, res: Response) => {
             fallbackModelName: fallbackModelName || 'gpt-4o'
         };
 
-        await saveAIConfig(updatedConfig);
+        await saveAIConfig(updatedConfig, { id: req.user?.id, username: req.user?.username });
         recordAdminAction(req, {
             action: 'ai.config', targetType: 'config', targetId: 'ai',
             // Never the key itself, only that it moved.
@@ -928,6 +972,8 @@ export const updateAIConfig = async (req: AuthRequest, res: Response) => {
                 hasApiKey: Boolean(updatedConfig.apiKey),
                 hasFallbackApiKey: Boolean(updatedConfig.fallbackApiKey),
             },
+            source: configSource(),
+            health: aiHealth(),
         });
     } catch (error: any) {
         res.status(500).json({ success: false, message: error.message });

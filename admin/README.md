@@ -55,11 +55,33 @@ separate admin password: it is the same Supabase account the app uses.
 To make the first admin, run `backend/src/scripts/createAdmin.ts`, or set
 `role = 'admin'` on the row directly.
 
-## Before the audit log works
+## Two migrations this console depends on
 
-Run `backend/src/scripts/migrations/013_admin_audit.sql` on Supabase. Until
-then the audit page says so plainly and everything else works — nothing
-depends on it except the log itself.
+Run both on Supabase (or the whole set at once with
+`./scripts/bundle-migrations.sh`):
+
+- **`013_admin_audit.sql`** — the audit log. Until it exists that page says
+  so plainly and everything else works.
+- **`014_app_settings.sql`** — where the AI provider configuration is
+  stored. Without it, saving a key fails loudly (which is the point: the old
+  behaviour wrote to a file the next redeploy deleted, and nothing said so).
+
+## Changing the AI key without users noticing
+
+The AI provider page is built around the fact that a dead key is discovered
+by users, not by admins:
+
+- The panel at the top says whether MaxAI is **actually answering**, with the
+  provider's own reason when it is not — a 401 is the key, a 429 is the bill,
+  a 404 is the model name.
+- **Test this provider** sends one tiny message using whatever is in the form
+  and reports what came back. Nothing is saved, so a key can be checked
+  before it is trusted.
+- A save takes effect on the **next user message**. No restart, no redeploy:
+  the config is read per request and the cache is dropped on save.
+- Set a **fallback** key. With one stored, a failing primary is retried on
+  the fallback automatically and users never see the gap; without one, a dead
+  primary stops MaxAI for everyone.
 
 ## Notes for whoever works on this next
 

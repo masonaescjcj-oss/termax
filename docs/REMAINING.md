@@ -175,6 +175,9 @@ Two things are needed before it is fully live:
    `VITE_API_URL` to the backend's public origin. Then put that address in
    `mobile/src/config.ts` as `ADMIN_CONSOLE_URL` if you want the app to show
    admins a link to it.
-2. **Run `backend/src/scripts/migrations/013_admin_audit.sql`** on Supabase.
-   Until it exists the audit page says so and everything else works — only
-   the log itself depends on it.
+2. **Run the migrations** on Supabase — `./scripts/bundle-migrations.sh`
+   prints all of them in order, safe to run more than once. Two are what the
+   console needs: `013_admin_audit.sql` for the audit log, and
+   `014_app_settings.sql` for the AI provider configuration. Without 014,
+   saving an AI key fails loudly rather than writing to a file the next
+   redeploy would delete.

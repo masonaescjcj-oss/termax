@@ -17,6 +17,7 @@ import OpenAI from 'openai';
 import { AuthRequest } from '../middleware/auth';
 import User from '../models/User';
 import { loadAIConfig } from '../utils/aiConfigManager';
+import { recordAIOk, recordAIFailure, describe as describeAIError } from '../services/aiHealth';
 import { consumeMessage, dailyLimitFor, recordToolCalls } from '../services/ai/quota';
 import { executeTool, toolSchemas } from '../services/ai/tools';
 
@@ -115,18 +116,34 @@ export const chatWithMaxAI = async (req: AuthRequest, res: Response) => {
 
         const complete = async (body: any) => {
             try {
-                return await client.chat.completions.create(body);
+                const out = await client.chat.completions.create(body);
+                recordAIOk('primary');
+                return out;
             } catch (primaryError: any) {
-                if (!config.fallbackApiKey) throw primaryError;
-                console.error('[AI] Primary provider failed:', primaryError.message ?? primaryError);
+                if (!config.fallbackApiKey) {
+                    // Nothing to fall back to, so this is the outcome the
+                    // admin needs to see on the console.
+                    recordAIFailure(primaryError);
+                    throw primaryError;
+                }
+                console.error('[AI] Primary provider failed:', describeAIError(primaryError));
                 const fallback = new OpenAI({
                     apiKey: config.fallbackApiKey,
                     baseURL: config.fallbackBaseUrl || 'https://api.openai.com/v1',
                 });
-                return fallback.chat.completions.create({
-                    ...body,
-                    model: config.fallbackModelName || 'gpt-4o',
-                });
+                try {
+                    const out = await fallback.chat.completions.create({
+                        ...body,
+                        model: config.fallbackModelName || 'gpt-4o',
+                    });
+                    // Answered, but not by the provider that was supposed to
+                    // — worth surfacing rather than hiding as a success.
+                    recordAIOk('fallback');
+                    return out;
+                } catch (fallbackError: any) {
+                    recordAIFailure(fallbackError);
+                    throw fallbackError;
+                }
             }
         };
 
@@ -202,8 +219,15 @@ export const chatWithMaxAI = async (req: AuthRequest, res: Response) => {
             usage: { used: quota.used, limit: quota.limit, toolCalls: toolCallCount },
         });
     } catch (error: any) {
-        console.error('MaxAI Controller Error:', error.response?.data || error.message);
-        res.status(500).json({ error: 'Communication failure with MaxAI brain', details: error.message });
+        // `details: error.message` handed the provider's raw error — key
+        // fragments, internal URLs and all — to every client. The detail
+        // stays in the server log and on the admin console; the user gets a
+        // sentence that tells them what to do.
+        console.error('MaxAI Controller Error:', describeAIError(error));
+        res.status(503).json({
+            error: 'MaxAI is unavailable right now. This is being looked at — please try again shortly.',
+            code: 'AI_UNAVAILABLE',
+        });
     }
 };
 
