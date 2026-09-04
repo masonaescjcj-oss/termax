@@ -4,6 +4,39 @@ import { AuthRequest, issueFallbackToken, issueFallbackRefreshToken } from '../m
 import { mapUserToCamel, mapUserToSnake } from '../utils/mapper';
 import crypto from 'crypto';
 
+// ═══════════════════════════════════════════════════════════════
+//  EMAIL VERIFICATION — built, switched off
+//
+//  Off, a new account gets a session the moment it is created, which is
+//  what a launch wants: nothing between a person and the app. On, the
+//  account is created unconfirmed, Supabase mails a confirmation link, and
+//  neither register nor login hands out a session until it is clicked.
+//  The client reads which mode is live from GET /auth/config, so turning
+//  this on is one environment variable and a restart — no app release.
+// ═══════════════════════════════════════════════════════════════
+export const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
+
+/**
+ * Where confirmation and password-recovery links land. The web build of the
+ * app handles both (`#type=recovery` opens the reset form). Must also be on
+ * the Supabase project's redirect allow-list, or Supabase ignores it.
+ */
+const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '');
+
+/**
+ * Password rules, applied to accounts people create themselves. The Telegram
+ * path derives its password server-side and never sees this. Eight
+ * characters with a letter and a digit is the floor a trading account should
+ * have; the client shows the same rule as the user types.
+ */
+export const passwordProblem = (password: unknown): string | null => {
+    const p = String(password ?? '');
+    if (p.length < 8) return 'Password must be at least 8 characters.';
+    if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) return 'Password needs at least one letter and one digit.';
+    if (p.length > 128) return 'Password is too long.';
+    return null;
+};
+
 /**
  * Generate deterministic secure password for Telegram users
  */
@@ -75,10 +108,13 @@ const performRegister = async (params: {
 
     // 1. Create user in Supabase Auth via Admin API
     let userId: string;
+    // A Telegram account has no inbox to confirm from — its identity is the
+    // Telegram id — so it is always created confirmed.
+    const confirmNow = !REQUIRE_EMAIL_VERIFICATION || Boolean(telegramId);
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
         email: email.toLowerCase(),
         password: passwordHash,
-        email_confirm: true,
+        email_confirm: confirmNow,
         user_metadata: { username: username.toLowerCase() }
     });
 
@@ -221,8 +257,12 @@ export const register = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: 'Username can only contain letters, numbers, and underscores.' });
         }
 
-        if (password.length < 8) {
-            return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+        if (!telegramId) {
+            const problem = passwordProblem(password);
+            if (problem) return res.status(400).json({ success: false, message: problem });
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+            return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
         }
 
         // Fast check if username or email already exists in DB
@@ -264,6 +304,22 @@ export const register = async (req: AuthRequest, res: Response) => {
             referredByUserId
         });
 
+        // With verification on, the account exists but is unconfirmed: mail
+        // the link and hand back no session. The client shows "check your
+        // inbox" and offers a resend.
+        if (REQUIRE_EMAIL_VERIFICATION && !telegramId) {
+            const sent = await sendConfirmationEmail(email);
+            return res.status(201).json({
+                success: true,
+                needsVerification: true,
+                emailSent: sent,
+                message: sent
+                    ? 'Account created. Check your inbox for a confirmation link.'
+                    : 'Account created, but the confirmation email could not be sent. Use "Resend" in a moment.',
+                data: { user: mapUserToCamel(profile) }
+            });
+        }
+
         // Sign in to get access token and refresh token
         const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
             email: email.toLowerCase(),
@@ -294,14 +350,41 @@ export const register = async (req: AuthRequest, res: Response) => {
         if (error.message && (error.message.includes('duplicate key') || error.message.includes('already exists'))) {
             return res.status(409).json({ success: false, message: 'Username or email already exists.' });
         }
-        const fallbackData = getFallbackUserResponse(req.body.telegramId, req.body.username || req.body.email);
-        res.status(201).json({
-            success: true,
-            message: 'Account created successfully.',
-            data: fallbackData
+        // The offline fallback exists so a Telegram user still gets in when
+        // the database is slow — their identity is their Telegram id, so an
+        // offline session is still theirs. For anyone else it handed out a
+        // shared demo identity on any error at all, which is the opposite
+        // of a login gate. They get told the truth instead.
+        if (req.body.telegramId) {
+            const fallbackData = getFallbackUserResponse(req.body.telegramId, req.body.username || req.body.email);
+            return res.status(201).json({ success: true, message: 'Account created successfully.', data: fallbackData });
+        }
+        res.status(503).json({
+            success: false,
+            message: 'We could not create your account right now. Please try again in a moment.',
         });
     }
 };
+
+/**
+ * Ask Supabase to (re)send the signup confirmation for an address. Never
+ * throws — the account already exists, and a mail failure is reported, not
+ * fatal.
+ */
+async function sendConfirmationEmail(email: string): Promise<boolean> {
+    try {
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email.toLowerCase(),
+            options: PUBLIC_APP_URL ? { emailRedirectTo: PUBLIC_APP_URL } : undefined,
+        });
+        if (error) console.warn('[Auth] Confirmation email not sent:', error.message);
+        return !error;
+    } catch (e: any) {
+        console.warn('[Auth] Confirmation email not sent:', e?.message ?? e);
+        return false;
+    }
+}
 
 /**
  * POST /api/v1/auth/login
@@ -371,6 +454,17 @@ export const login = async (req: AuthRequest, res: Response) => {
         });
 
         if (sessionError || !sessionData.session) {
+            // Supabase says this in words when verification is on. Telling
+            // the person their password is wrong when it is not would send
+            // them to reset it for nothing.
+            if (/not confirmed/i.test(sessionError?.message || '')) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'EMAIL_NOT_VERIFIED',
+                    email: userEmail,
+                    message: 'Confirm your email address first — check your inbox for the link.',
+                });
+            }
             return res.status(401).json({ success: false, message: 'Invalid credentials.' });
         }
 
@@ -399,11 +493,15 @@ export const login = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         console.error('Login Error:', error?.message || error);
-        const fallbackData = getFallbackUserResponse(req.body.telegramId, req.body.username || req.body.email);
-        res.status(200).json({
-            success: true,
-            message: 'Login successful.',
-            data: fallbackData
+        // See the note in register: the offline session is for Telegram
+        // users only. A failed password login must fail.
+        if (req.body.telegramId) {
+            const fallbackData = getFallbackUserResponse(req.body.telegramId, req.body.username || req.body.email);
+            return res.status(200).json({ success: true, message: 'Login successful.', data: fallbackData });
+        }
+        res.status(503).json({
+            success: false,
+            message: 'Sign-in is unavailable right now. Please try again in a moment.',
         });
     }
 };
@@ -754,4 +852,64 @@ export const deactivateAccount = async (req: AuthRequest, res: Response) => {
         console.error('Deactivate Account Error:', error);
         res.status(500).json({ success: false, message: 'An error occurred during account deletion.', error: error.message });
     }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH CONFIG, VERIFICATION RESEND, PASSWORD RECOVERY
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/v1/auth/config
+ * What the sign-up flow should expect. Public: it decides which screens
+ * the client shows, and it carries no secret.
+ */
+export const authConfig = async (_req: AuthRequest, res: Response) => {
+    res.json({
+        success: true,
+        data: {
+            emailVerification: REQUIRE_EMAIL_VERIFICATION,
+            passwordRule: 'At least 8 characters, with a letter and a digit.',
+            minPasswordLength: 8,
+        },
+    });
+};
+
+/**
+ * POST /api/v1/auth/resend-verification  { email }
+ * Always answers the same way, so it cannot be used to learn which
+ * addresses have accounts.
+ */
+export const resendVerification = async (req: AuthRequest, res: Response) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+    }
+    if (!REQUIRE_EMAIL_VERIFICATION) {
+        return res.json({ success: true, message: 'Email verification is not required. You can sign in.' });
+    }
+    await sendConfirmationEmail(email);
+    res.json({ success: true, message: 'If that address has an unconfirmed account, a new link is on its way.' });
+};
+
+/**
+ * POST /api/v1/auth/forgot-password  { email }
+ * Sends Supabase's recovery link. The link lands on PUBLIC_APP_URL with
+ * `#type=recovery`, which the web build turns into the set-a-new-password
+ * form. Same answer whether or not the address exists.
+ */
+export const forgotPassword = async (req: AuthRequest, res: Response) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+    }
+    try {
+        const { error } = await supabase.auth.resetPasswordForEmail(
+            email,
+            PUBLIC_APP_URL ? { redirectTo: PUBLIC_APP_URL } : undefined,
+        );
+        if (error) console.warn('[Auth] Recovery email not sent:', error.message);
+    } catch (e: any) {
+        console.warn('[Auth] Recovery email not sent:', e?.message ?? e);
+    }
+    res.json({ success: true, message: 'If that address has an account, a reset link is on its way.' });
 };

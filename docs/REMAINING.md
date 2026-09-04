@@ -181,3 +181,24 @@ Two things are needed before it is fully live:
    `014_app_settings.sql` for the AI provider configuration. Without 014,
    saving an AI key fails loudly rather than writing to a file the next
    redeploy would delete.
+
+## Sign-in gate
+
+The app now opens on a sign-in / create-account screen (`mobile/src/screens/AuthScreen.tsx`)
+and nothing behind it renders without a session the server still accepts.
+Telegram users never see it — they are signed in from their Telegram identity.
+
+Two switches, both server-side, both off for launch:
+
+- **`REQUIRE_EMAIL_VERIFICATION=true`** makes new accounts confirm their email
+  before they can sign in. The app reads the mode from `GET /auth/config`, so
+  turning it on needs no release. Supabase must have email sending configured
+  (Authentication → Email) for the confirmation to actually go out.
+- **`PUBLIC_APP_URL`** is where confirmation and password-reset links land
+  (the web build handles `#type=recovery`). **Add the same URL to the Supabase
+  project's redirect allow-list** (Authentication → URL Configuration) —
+  without that, Supabase silently ignores it and the reset link goes to the
+  project's default Site URL instead.
+
+Forgot-password works without either switch: it sends Supabase's recovery
+email, and the web build turns the link into a set-a-new-password form.

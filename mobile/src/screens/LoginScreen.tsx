@@ -643,6 +643,9 @@ export default function LoginScreen() {
     setBrokerPassword('');
     setUsernameAvailable(null);
     setFlow('auth');
+    if (!isTelegram) {
+      navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
+    }
   };
 
   const handleDeleteAccount = async () => {
@@ -676,151 +679,27 @@ export default function LoginScreen() {
   };
 
   // ─── RENDER ──────────────────────────────────
-  const renderAuth = () => {
-    const isRegisterValid = socialUsername.length >= 5 && usernameAvailable && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(socialEmail) && socialPassword.length >= 8;
-    const isLoginValid = loginUsername.length > 0 && loginPassword.length > 0;
-
-    return (
-      <View style={[styles.connectedCard, glassStyle, { backgroundColor: isDark ? '#000000' : '#FFFFFF', borderWidth: 1, borderColor: colors.border }]}>
-        {/* TradingView/Revolut-style Header */}
-        <View style={styles.authHeader}>
-          <View style={styles.logoOuterRing}>
-            <Image source={require('../../assets/app-logo.png')} style={{ width: 52, height: 52 }} resizeMode="contain" />
-          </View>
-          <Text style={styles.authSubtitle}>
-            {authTab === 'login' ? 'Sign in to monitor positions & copy trades' : 'Create an account to start trading'}
-          </Text>
-        </View>
-
-        {/* Tab Selection */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity onPress={() => setAuthTab('login')} style={[styles.tabButton, authTab === 'login' && styles.activeTabButton]}>
-            <Text style={[styles.tabButtonText, authTab === 'login' ? styles.activeTabButtonText : { color: colors.textMuted }]}>Sign In</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setAuthTab('register')} style={[styles.tabButton, authTab === 'register' && styles.activeTabButton]}>
-            <Text style={[styles.tabButtonText, authTab === 'register' ? styles.activeTabButtonText : { color: colors.textMuted }]}>Sign Up</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Form Fields */}
-        {authTab === 'login' ? (
-          <View style={{ width: '100%', gap: 16 }}>
-            <View style={styles.inputBox}>
-              <User color={colors.primary} size={20} style={{ marginRight: 12 }} />
-              <TextInput 
-                style={[styles.input, { color: colors.text }]} 
-                placeholder="Username or Email" 
-                placeholderTextColor={colors.textMuted} 
-                autoCapitalize="none" 
-                value={loginUsername} 
-                onChangeText={setLoginUsername}
-              />
-            </View>
-
-            <View style={styles.inputBox}>
-              <Key color={colors.primary} size={20} style={{ marginRight: 12 }} />
-              <TextInput 
-                style={[styles.input, { color: colors.text }]} 
-                placeholder="Password" 
-                placeholderTextColor={colors.textMuted} 
-                secureTextEntry 
-                value={loginPassword} 
-                onChangeText={setLoginPassword}
-              />
-            </View>
-
-            <TouchableOpacity onPress={handleLogin} disabled={!isLoginValid || isLoggingIn} style={{ width: '100%', marginTop: 12 }}>
-              <LinearGradient
-                colors={isLoginValid && !isLoggingIn ? ['#2962FF', '#1E40AF'] : (isDark ? ['rgba(255,255,255,0.03)', 'rgba(255,255,255,0.01)'] : ['#E2E8F0', '#CBD5E1'])}
-                style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              >
-                {isLoggingIn ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <Text style={[styles.connectBtnText, !isLoginValid && { color: colors.textMuted }]}>Sign In</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={{ width: '100%', gap: 16 }}>
-            <View style={styles.inputBox}>
-              <User color={colors.primary} size={20} style={{ marginRight: 12 }} />
-              <TextInput 
-                style={[styles.input, { color: colors.text }]} 
-                placeholder="Username (min 5 chars)" 
-                placeholderTextColor={colors.textMuted} 
-                autoCapitalize="none" 
-                value={socialUsername} 
-                onChangeText={(text) => { 
-                  setSocialUsername(text); 
-                  setUsernameAvailable(text.length >= 5 && /^[a-zA-Z0-9_]+$/.test(text) ? true : null); 
-                }}
-              />
-              <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                {socialUsername.length > 0 && (
-                  usernameAvailable ? <Check color={colors.success} size={20} /> : <ShieldAlert color={colors.danger} size={20} />
-                )}
-              </View>
-            </View>
-
-            <View style={styles.inputBox}>
-              <Mail color={colors.primary} size={20} style={{ marginRight: 12 }} />
-              <TextInput 
-                style={[styles.input, { color: colors.text }]} 
-                placeholder="Email Address" 
-                placeholderTextColor={colors.textMuted} 
-                keyboardType="email-address" 
-                autoCapitalize="none" 
-                value={socialEmail} 
-                onChangeText={socialEmail => setSocialEmail(socialEmail)}
-              />
-              <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                {socialEmail.length > 0 && (
-                  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(socialEmail) ? <Check color={colors.success} size={20} /> : <ShieldAlert color={colors.danger} size={20} />
-                )}
-              </View>
-            </View>
-
-            <View style={styles.inputBox}>
-              <Key color={colors.primary} size={20} style={{ marginRight: 12 }} />
-              <TextInput 
-                style={[styles.input, { color: colors.text }]} 
-                placeholder="Password (min 8 chars)" 
-                placeholderTextColor={colors.textMuted} 
-                secureTextEntry 
-                value={socialPassword} 
-                onChangeText={socialPassword => setSocialPassword(socialPassword)}
-              />
-              <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                {socialPassword.length > 0 && (
-                  socialPassword.length >= 8 ? <Check color={colors.success} size={20} /> : <ShieldAlert color={colors.danger} size={20} />
-                )}
-              </View>
-            </View>
-
-            <TouchableOpacity onPress={handleRegisterComplete} disabled={!isRegisterValid || isRegistering} style={{ width: '100%', marginTop: 12 }}>
-              <LinearGradient
-                colors={isRegisterValid && !isRegistering ? ['#2962FF', '#1E40AF'] : (isDark ? ['rgba(255,255,255,0.03)', 'rgba(255,255,255,0.01)'] : ['#E2E8F0', '#CBD5E1'])}
-                style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              >
-                {isRegistering ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <Text style={[styles.connectBtnText, !isRegisterValid && { color: colors.textMuted }]}>Create Account</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Footer Disclaimer */}
-        <Text style={styles.disclaimerText}>
-          By continuing, you agree to the Terms of Service and Privacy Policy.
-        </Text>
+  // The sign-in and sign-up forms used to live here, inside the profile tab.
+  // They are their own screen now — AuthScreen — and the navigator will not
+  // open the app without a session, so this branch is only ever reached in
+  // the moment after signing out, or if a session is revoked underneath the
+  // app. Either way the right answer is the door, not a second copy of it.
+  const renderAuth = () => (
+    <View style={[styles.connectedCard, glassStyle, { backgroundColor: isDark ? '#000000' : '#FFFFFF', borderWidth: 1, borderColor: colors.border, alignItems: 'center', paddingVertical: 36 }]}>
+      <View style={styles.logoOuterRing}>
+        <Image source={require('../../assets/app-logo.png')} style={{ width: 52, height: 52 }} resizeMode="contain" />
       </View>
-    );
-  };
+      <Text style={[styles.authSubtitle, { marginTop: 12 }]}>You are signed out.</Text>
+      <TouchableOpacity
+        onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Auth' }] })}
+        style={{ width: '100%', marginTop: 20 }}
+      >
+        <LinearGradient colors={['#2962FF', '#1E40AF']} style={styles.connectBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+          <Text style={styles.connectBtnText}>Sign in</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
 
   const renderConnectBroker = () => (
     <BlurView experimentalBlurMethod="regular" intensity={100} tint={colors.blurTint} style={[styles.connectedCard, { borderColor: '#2962FF' }, glassStyle]}>

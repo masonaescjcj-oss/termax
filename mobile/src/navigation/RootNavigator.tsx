@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
@@ -25,8 +25,16 @@ import AiStudioScreen from '../screens/AiStudioScreen';
 import UpgradeScreen from '../screens/UpgradeScreen';
 import JournalScreen from '../screens/JournalScreen';
 import PortfolioScreen from '../screens/PortfolioScreen';
+import AuthScreen from '../screens/AuthScreen';
+import { getItemAsync, deleteItemAsync } from '../utils/storage';
 import { useTheme } from '../theme/ThemeContext';
-import { isTelegram } from '../config';
+import { isTelegram, BACKEND_URL } from '../config';
+// Both of these were used here — by the Telegram auto-login — without ever
+// being imported. The file is @ts-nocheck, so nothing said so, and the
+// ReferenceError was swallowed by the surrounding try/catch. The Telegram
+// branch had been dead code, masked by App.tsx doing the same sync; the
+// auth gate was the first thing to depend on this file actually working.
+import axios from 'axios';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -156,10 +164,66 @@ export default function RootNavigator() {
     const { colors, isDark } = useTheme();
     const navigationRef = React.useRef<any>(null);
     const [isAuthChecked, setIsAuthChecked] = React.useState(false);
+    // Where the app opens. Nothing renders until this is decided, so there
+    // is never a frame of the app before the door.
+    const [initialRoute, setInitialRoute] = React.useState<'MainTabs' | 'Auth'>('MainTabs');
+    const [initialParams, setInitialParams] = React.useState<any>(undefined);
 
     // Telegram Auto-Login on Mount
     React.useEffect(() => {
+        /**
+         * The gate. Telegram users are signed in from their Telegram identity
+         * in the branch below and never see it. Everyone else needs a
+         * session that the server still accepts.
+         */
+        const decideGate = async () => {
+            if (isTelegram) return;
+
+            // A password-recovery link lands on the web build with the
+            // session in the URL hash. That is a reason to open the door
+            // on its reset form, not a reason to walk in.
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && (window.location.hash || '').includes('type=recovery')) {
+                setInitialRoute('Auth');
+                setInitialParams({ mode: 'reset' });
+                return;
+            }
+
+            const token = await getItemAsync('accessToken');
+            if (!token || token === 'null' || token === 'undefined') {
+                setInitialRoute('Auth');
+                return;
+            }
+
+            // A token in storage proves nothing about the server. Ask it —
+            // but a network failure is not a "no": the person may simply be
+            // offline, and their cached session is still the best answer.
+            try {
+                await axios.get(`${BACKEND_URL}/api/v1/auth/me`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: 6000,
+                });
+                setInitialRoute('MainTabs');
+            } catch (e: any) {
+                const status = e?.response?.status;
+                if (status === 401 || status === 403) {
+                    await deleteItemAsync('accessToken');
+                    await deleteItemAsync('refreshToken');
+                    await deleteItemAsync('cached_user_profile');
+                    setInitialRoute('Auth');
+                    return;
+                }
+                // Offline, or the server is down: the cached session is still
+                // the best answer, so let them in. Anything else — a code
+                // error, an unexpected status — is not "offline", and a gate
+                // that opens on any exception is not a gate.
+                const offline = !e?.response && (e?.code === 'ERR_NETWORK' || e?.code === 'ECONNABORTED' || e?.message === 'Network Error');
+                setInitialRoute(offline ? 'MainTabs' : 'Auth');
+                if (!offline) console.warn('[Gate] Session check failed:', e?.message ?? e);
+            }
+        };
+
         const checkTelegramLogin = async () => {
+            await decideGate();
             if (isTelegram && typeof window !== 'undefined') {
                 const tg = (window as any).Telegram?.WebApp;
                 if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
@@ -393,7 +457,8 @@ export default function RootNavigator() {
             onReady={syncTelegramBackButton}
             onStateChange={syncTelegramBackButton}
         >
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRoute}>
+                <Stack.Screen name="Auth" component={AuthScreen} initialParams={initialParams} />
                 <Stack.Screen name="MainTabs" component={BottomTabs} />
                 <Stack.Screen name="AssetDetails" component={AssetDetailsScreen} />
                 <Stack.Screen name="ToolsHub" component={ToolsHubScreen} />
