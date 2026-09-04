@@ -53,15 +53,15 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "compileSdkVersion": 35
           }
         }
       ],
       [
         "expo-media-library",
         {
-          "savePhotosPermission": "ترمکس برای ذخیره‌ی تصویر ژورنال در گالری شما اجازه می‌خواهد.",
-          "photosPermission": "ترمکس برای ذخیره‌ی تصویر ژورنال به گالری دسترسی می‌خواهد.",
+          "savePhotosPermission": "Termax needs access to your gallery to save a journal card.",
+          "photosPermission": "Termax needs access to your gallery to save a journal card.",
           "isAccessMediaLocationEnabled": false
         }
       ]

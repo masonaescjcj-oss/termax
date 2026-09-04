@@ -171,10 +171,17 @@ async function main() {
     // ── quota limits ────────────────────────────────────────────────
     section('quota: env-driven daily limit');
     {
+        // The app is given away — FREE_FOR_ALL defaults on, so a plain user
+        // resolves to PRO and gets the PRO allowance, not the old 30. The
+        // tiered numbers are still proven in plans.test.ts with the switch
+        // off; do not change this back to 30 without turning charging on.
         delete process.env.AI_FREE_DAILY_MSGS;
-        check('default 30/day', dailyLimitFor({}), 30);
+        check('a plain user gets the unlocked allowance', dailyLimitFor({}), 300);
+
+        // The AI bill is the one cost that giving the app away does not
+        // remove, so this cap has to still bite.
         process.env.AI_FREE_DAILY_MSGS = '55';
-        check('env override', dailyLimitFor({}), 55);
+        check('env override still caps everyone', dailyLimitFor({}), 55);
         check('admin unlimited', dailyLimitFor({ role: 'admin' }) > 1000, true);
         delete process.env.AI_FREE_DAILY_MSGS;
     }

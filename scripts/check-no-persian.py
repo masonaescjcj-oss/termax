@@ -22,6 +22,17 @@ PERSIAN = re.compile(r'[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]')
 REPO = Path(__file__).resolve().parent.parent
 ROOTS = [REPO / 'mobile' / 'src', REPO / 'backend' / 'src', REPO / 'admin' / 'src']
 SUFFIXES = {'.ts', '.tsx', '.js', '.jsx'}
+
+# Individual files outside those roots that also carry text a user reads.
+# mobile/app.json is the one that got away: its expo-media-library
+# permission strings were still Persian long after the app was converted,
+# because the gate only ever looked under src/. Those strings appear in the
+# Android permission dialog and are carried into the Play listing.
+EXTRA_FILES = [
+    REPO / 'mobile' / 'app.json',
+    REPO / 'mobile' / 'app.config.js',
+    REPO / 'mobile' / 'app.config.ts',
+]
 SKIP_PARTS = {'node_modules', 'legacy-debug', '__tests__'}
 # The Jalali calendar exists to render Persian month names; the trace and
 # describe modules keep a Persian branch that nothing calls any more but
@@ -57,24 +68,31 @@ DEAD_FA_BRANCH = {
 }
 ALLOW_FILES |= DEAD_FA_BRANCH
 
+def scan(path, hits):
+    rel = path.relative_to(REPO).as_posix()
+    if rel in ALLOW_FILES or '.test.' in path.name:
+        return
+    try:
+        text = path.read_text(encoding='utf-8')
+    except Exception:
+        return
+    for n, ln in enumerate(text.splitlines(), 1):
+        if PERSIAN.search(ln) and 'persian-ok' not in ln:
+            hits.append((rel, n, ln.strip()[:90]))
+
+
 def main() -> int:
     hits = []
+    for path in EXTRA_FILES:
+        if path.exists():
+            scan(path, hits)
     for root in ROOTS:
         for path in root.rglob('*'):
             if path.suffix not in SUFFIXES:
                 continue
             if any(part in SKIP_PARTS for part in path.parts):
                 continue
-            rel = path.relative_to(REPO).as_posix()
-            if rel in ALLOW_FILES or '.test.' in path.name:
-                continue
-            try:
-                text = path.read_text(encoding='utf-8')
-            except Exception:
-                continue
-            for n, ln in enumerate(text.splitlines(), 1):
-                if PERSIAN.search(ln) and 'persian-ok' not in ln:
-                    hits.append((rel, n, ln.strip()[:90]))
+            scan(path, hits)
 
     if not hits:
         print('✅ no Persian text outside the allowed files')
