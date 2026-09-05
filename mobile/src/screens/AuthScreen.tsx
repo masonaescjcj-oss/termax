@@ -34,10 +34,11 @@ type Mode = 'signin' | 'signup' | 'forgot' | 'verify' | 'reset';
 
 const C = {
     bg: darkColors.background,
-    // The same surface the rest of the app draws its cards and tab bar on,
-    // and the same input border. On a black page a darker box has no edge;
-    // this one is visibly a box.
-    surface: darkColors.surface,
+    // Nothing on this screen is filled. A field, the card, the logo tile —
+    // each is the page itself, and only its border says where it begins.
+    // A lighter fill would make the boxes read as panels sitting on top of
+    // the app rather than as part of it.
+    surface: 'transparent',
     border: darkColors.glassInputBorder,
     borderFocus: darkColors.primary,
     text: '#FFFFFF',
@@ -477,7 +478,7 @@ export default function AuthScreen({ navigation, route }: any) {
     const renderVerify = () => (
         <>
             <View style={s.header}>
-                <View style={[s.logoTile, { backgroundColor: 'rgba(41,98,255,0.14)' }]}>
+                <View style={[s.logoTile, { borderColor: 'rgba(41,98,255,0.45)' }]}>
                     <MailCheck color={C.primary} size={30} />
                 </View>
                 <Text style={s.title}>Check your inbox</Text>
@@ -548,14 +549,14 @@ const s = StyleSheet.create({
     scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 },
     column: { width: '100%', maxWidth: 440, alignSelf: 'center' },
     card: {
-        backgroundColor: '#0B0E14', borderRadius: 24, padding: 36,
+        backgroundColor: 'transparent', borderRadius: 24, padding: 36,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     },
     back: { alignSelf: 'flex-start', padding: 4, marginBottom: 8, marginLeft: -4 },
 
     header: { alignItems: 'center', marginBottom: 28 },
     logoTile: {
-        width: 72, height: 72, borderRadius: 20, backgroundColor: '#0A0C10',
+        width: 72, height: 72, borderRadius: 20, backgroundColor: 'transparent',
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
         alignItems: 'center', justifyContent: 'center', marginBottom: 20,
     },
