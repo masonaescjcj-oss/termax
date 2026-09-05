@@ -28,14 +28,18 @@ import { BACKEND_URL } from '../config';
 import { setItemAsync } from '../utils/storage';
 import { supabase } from '../lib/supabase';
 import { useAccountStore } from '../store/accountStore';
+import { darkColors } from '../theme/colors';
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'verify' | 'reset';
 
 const C = {
-    bg: '#000000',
-    surface: '#0B0D12',
-    border: 'rgba(255,255,255,0.10)',
-    borderFocus: '#2962FF',
+    bg: darkColors.background,
+    // The same surface the rest of the app draws its cards and tab bar on,
+    // and the same input border. On a black page a darker box has no edge;
+    // this one is visibly a box.
+    surface: darkColors.surface,
+    border: darkColors.glassInputBorder,
+    borderFocus: darkColors.primary,
     text: '#FFFFFF',
     label: '#D1D4DC',
     muted: '#848E9C',
@@ -544,14 +548,15 @@ const s = StyleSheet.create({
     scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 },
     column: { width: '100%', maxWidth: 440, alignSelf: 'center' },
     card: {
-        backgroundColor: '#07090F', borderRadius: 24, padding: 36,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+        backgroundColor: '#0B0E14', borderRadius: 24, padding: 36,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     },
     back: { alignSelf: 'flex-start', padding: 4, marginBottom: 8, marginLeft: -4 },
 
     header: { alignItems: 'center', marginBottom: 28 },
     logoTile: {
-        width: 72, height: 72, borderRadius: 20, backgroundColor: C.primary,
+        width: 72, height: 72, borderRadius: 20, backgroundColor: '#0A0C10',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
         alignItems: 'center', justifyContent: 'center', marginBottom: 20,
     },
     logo: { width: 44, height: 34 },
@@ -563,7 +568,7 @@ const s = StyleSheet.create({
     inputWrap: {
         flexDirection: 'row', alignItems: 'center',
         backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
-        borderRadius: 14, minHeight: 54,
+        borderRadius: 16, minHeight: 52,
     },
     inputWrapFocused: { borderColor: C.borderFocus },
     input: { flex: 1, color: C.text, fontSize: 16, paddingHorizontal: 16, paddingVertical: 14, outlineStyle: 'none' } as any,
@@ -571,12 +576,12 @@ const s = StyleSheet.create({
     hint: { fontSize: 12.5, marginTop: 7, color: C.muted },
 
     primary: {
-        backgroundColor: C.primary, borderRadius: 14, minHeight: 54,
+        backgroundColor: C.primary, borderRadius: 16, minHeight: 52,
         alignItems: 'center', justifyContent: 'center', marginTop: 6,
     },
     primaryText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
     secondary: {
-        borderRadius: 14, minHeight: 54, alignItems: 'center', justifyContent: 'center',
+        borderRadius: 16, minHeight: 52, alignItems: 'center', justifyContent: 'center',
         borderWidth: 1, borderColor: C.border, backgroundColor: C.surface,
     },
     secondaryText: { color: C.text, fontSize: 15, fontWeight: '600' },
