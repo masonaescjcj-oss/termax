@@ -275,3 +275,22 @@ candle window, MFE/MAE, after-exit move and verdicts.
 Not yet on the web: code-tier indicators authoring (toggle/delete work;
 writing code stays in the app's AI Studio), replay speed persistence,
 journal share card.
+
+## Two-factor authentication and CI
+
+Shipped: TOTP through Supabase GoTrue — enrol (QR plus a typed key),
+confirm, and turn off from web Settings; a code step in sign-in. The
+enforcement is real, not decoration: `verifyToken` refuses any token that
+has not presented the second factor (`aal` claim) once the account has a
+verified factor, so a stolen password alone opens nothing. The two
+completion routes accept the first-factor session because finishing the
+sign-in is what they are for.
+
+CI on GitHub Actions for every push and pull request: backend typecheck
+and test suite, web and admin production builds, mobile typecheck, and
+the English-only gate. No secrets needed — the backend tests set their
+own fake Supabase environment.
+
+Not yet: 2FA on the mobile app (the API is ready; the app still signs in
+with the password alone and will hit `MFA_REQUIRED`), recovery codes,
+trusted devices, and an admin view of which accounts have it on.

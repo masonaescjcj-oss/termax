@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase';
 import { AuthRequest, issueFallbackToken, issueFallbackRefreshToken } from '../middleware/auth';
 import { mapUserToCamel, mapUserToSnake } from '../utils/mapper';
 import crypto from 'crypto';
+import { aalOf, hasVerifiedFactor, listFactors } from '../services/mfa';
 
 // ═══════════════════════════════════════════════════════════════
 //  EMAIL VERIFICATION — built, switched off
@@ -480,6 +481,28 @@ export const login = async (req: AuthRequest, res: Response) => {
         const mappedProfile = mapUserToCamel(finalProfile);
         if (mappedProfile.settings?.deactivated === true) {
             return res.status(403).json({ success: false, message: 'This account has been deleted.' });
+        }
+
+        // Two-factor: the password got a first-factor session, which the
+        // rest of the API refuses. Hand back only what the client needs to
+        // present the code — the profile waits until the session is whole.
+        if (aalOf(sessionData.session.access_token) !== 'aal2' && await hasVerifiedFactor(sessionData.session.user.id)) {
+            let factors: Array<{ id: string; friendlyName: string | null }> = [];
+            try {
+                factors = (await listFactors(sessionData.session.access_token))
+                    .filter(f => f.status === 'verified')
+                    .map(f => ({ id: f.id, friendlyName: f.friendlyName }));
+            } catch { /* the client can still ask GET /auth/mfa */ }
+            return res.status(200).json({
+                success: true,
+                message: 'Enter the code from your authenticator app.',
+                mfaRequired: true,
+                data: {
+                    accessToken: sessionData.session.access_token,
+                    refreshToken: sessionData.session.refresh_token,
+                    factors,
+                },
+            });
         }
 
         res.status(200).json({

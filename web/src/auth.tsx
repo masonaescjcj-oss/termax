@@ -40,7 +40,11 @@ export type User = {
 
 export type AuthConfig = { requireEmailVerification: boolean };
 
-type SignInResult = { ok: true } | { ok: false; needsVerification: true; email: string };
+export type MfaFactor = { id: string; friendlyName: string | null };
+type SignInResult =
+    | { ok: true }
+    | { ok: false; needsVerification: true; email: string }
+    | { ok: false; mfaRequired: true; factors: MfaFactor[] };
 type SignUpResult = { ok: true } | { ok: true; needsVerification: true; email: string; emailSent: boolean };
 
 type AuthValue = {
@@ -49,6 +53,8 @@ type AuthValue = {
     offline: boolean;
     config: AuthConfig;
     signIn: (identifier: string, password: string) => Promise<SignInResult>;
+    /** Finish a sign-in that stopped for the second factor. */
+    completeMfa: (factorId: string, code: string) => Promise<void>;
     signUp: (username: string, email: string, password: string) => Promise<SignUpResult>;
     signOut: () => void;
     refresh: () => Promise<void>;
@@ -110,6 +116,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (isNetworkError(e)) {
                     setOffline(true);
                 } else {
+                    // A stored first-factor token is not a broken session,
+                    // just an unfinished one; either way, sign in again.
                     clearSession();
                     setUser(null);
                 }
@@ -136,7 +144,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const signIn = useCallback(async (identifier: string, password: string): Promise<SignInResult> => {
         const body: Record<string, string> = identifier.includes('@') ? { email: identifier, password } : { username: identifier, password };
         try {
-            const res = await api<{ data: any }>('/auth/login', { method: 'POST', body, anonymous: true });
+            const res = await api<{ data: any; mfaRequired?: boolean }>('/auth/login', { method: 'POST', body, anonymous: true });
+            if (res.mfaRequired) {
+                // A first-factor session: good enough to present the code
+                // and nothing else. No user is set, so the gate stays shut.
+                localStorage.setItem(TOKEN_KEY, res.data.accessToken);
+                if (res.data.refreshToken) localStorage.setItem(REFRESH_KEY, res.data.refreshToken);
+                return { ok: false, mfaRequired: true, factors: res.data.factors ?? [] };
+            }
             storeSession(res.data);
             setUser(res.data.user);
             setOffline(false);
@@ -147,6 +162,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             throw e;
         }
+    }, []);
+
+    const completeMfa = useCallback(async (factorId: string, code: string) => {
+        const res = await api<{ data: { accessToken: string; refreshToken: string } }>('/auth/mfa/verify', { method: 'POST', body: { factorId, code } });
+        localStorage.setItem(TOKEN_KEY, res.data.accessToken);
+        if (res.data.refreshToken) localStorage.setItem(REFRESH_KEY, res.data.refreshToken);
+        const me = await api<{ data: User }>('/auth/me');
+        localStorage.setItem(USER_KEY, JSON.stringify(me.data));
+        setUser(me.data);
+        setOffline(false);
+        syncUserRoom();
     }, []);
 
     const signUp = useCallback(async (username: string, email: string, password: string): Promise<SignUpResult> => {
@@ -177,9 +203,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const value = useMemo<AuthValue>(() => ({
-        user, ready, offline, config, signIn, signUp, signOut, refresh, updateMe,
+        user, ready, offline, config, signIn, completeMfa, signUp, signOut, refresh, updateMe,
         expiredNotice, clearExpiredNotice: () => setExpiredNotice(null),
-    }), [user, ready, offline, config, signIn, signUp, signOut, refresh, updateMe, expiredNotice]);
+    }), [user, ready, offline, config, signIn, completeMfa, signUp, signOut, refresh, updateMe, expiredNotice]);
 
     return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { supabase } from '../config/supabase';
+import { aalOf, hasVerifiedFactor } from '../services/mfa';
 
 export interface AuthRequest extends Request {
     user?: {
@@ -63,7 +64,15 @@ export const readFallbackToken = (token: string): string | null => {
 /**
  * Middleware: Verify Supabase JWT token and attach user to request
  */
-export const verifyToken = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Authenticate a bearer token.
+ *
+ * `allowPendingMfa` is for the endpoints that exist to *finish* a sign-in:
+ * they must accept the first-factor session that every other route
+ * refuses once the account carries a verified second factor.
+ */
+const authenticator = (opts: { allowPendingMfa?: boolean } = {}) =>
+    async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -110,6 +119,18 @@ export const verifyToken = async (req: AuthRequest, res: Response, next: NextFun
             if (!dbError) profile = data;
         } catch {}
 
+        // Two-factor: a session that has not presented the second factor
+        // is not a session. Without this the feature would be decoration —
+        // the first-factor token opens every route just the same.
+        if (!opts.allowPendingMfa && aalOf(token) !== 'aal2' && await hasVerifiedFactor(user.id)) {
+            res.status(401).json({
+                success: false,
+                message: 'Two-factor authentication is required for this account.',
+                code: 'MFA_REQUIRED',
+            });
+            return;
+        }
+
         req.user = {
             id: user.id,
             username: profile?.username || user.user_metadata?.username || user.email || 'user',
@@ -121,7 +142,12 @@ export const verifyToken = async (req: AuthRequest, res: Response, next: NextFun
         // caller is unauthenticated. Say so rather than inventing a session.
         res.status(503).json({ success: false, message: 'Authentication service unavailable. Please try again.', code: 'AUTH_UNAVAILABLE' });
     }
-};
+    };
+
+export const verifyToken = authenticator();
+
+/** Accepts a first-factor session — only the MFA completion routes use it. */
+export const verifyTokenPendingMfa = authenticator({ allowPendingMfa: true });
 
 /**
  * Middleware: Require admin role

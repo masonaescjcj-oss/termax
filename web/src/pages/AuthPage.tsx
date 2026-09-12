@@ -6,10 +6,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { useAuth } from '../auth';
+import { useAuth, type MfaFactor } from '../auth';
 import { Field } from '../components/ui';
 
-type Mode = 'signin' | 'signup' | 'forgot' | 'verify' | 'sent';
+type Mode = 'signin' | 'signup' | 'forgot' | 'verify' | 'sent' | 'mfa';
 
 const passwordProblem = (p: string) => {
     if (p.length < 8) return 'Use at least 8 characters.';
@@ -18,7 +18,7 @@ const passwordProblem = (p: string) => {
 };
 
 export function AuthPage() {
-    const { signIn, signUp, config, expiredNotice, clearExpiredNotice, user, ready } = useAuth();
+    const { signIn, completeMfa, signUp, config, expiredNotice, clearExpiredNotice, user, ready } = useAuth();
     const nav = useNavigate();
     const [mode, setMode] = useState<Mode>('signin');
     const [identifier, setIdentifier] = useState('');
@@ -28,6 +28,8 @@ export function AuthPage() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+    const [factors, setFactors] = useState<MfaFactor[]>([]);
+    const [code, setCode] = useState('');
 
     useEffect(() => { if (ready && user) nav('/', { replace: true }); }, [ready, user, nav]);
     useEffect(() => { if (expiredNotice) { setNotice(expiredNotice); clearExpiredNotice(); } }, [expiredNotice, clearExpiredNotice]);
@@ -40,7 +42,10 @@ export function AuthPage() {
     const doSignIn = () => run(async () => {
         if (!identifier.trim() || !password) throw new Error('Enter your email or username and your password.');
         const r = await signIn(identifier.trim(), password);
-        if (!r.ok && r.needsVerification) { setEmail(r.email.includes('@') ? r.email : ''); setMode('verify'); }
+        if (r.ok) return;
+        if ('mfaRequired' in r) { setFactors(r.factors); setCode(''); setMode('mfa'); return; }
+        setEmail(r.email.includes('@') ? r.email : '');
+        setMode('verify');
     });
 
     const doSignUp = () => run(async () => {
@@ -50,6 +55,14 @@ export function AuthPage() {
         if (pw) throw new Error(pw);
         const r = await signUp(username.trim(), email.trim().toLowerCase(), password);
         if ('needsVerification' in r && r.needsVerification) setMode('verify');
+    });
+
+    const doMfa = () => run(async () => {
+        const clean = code.replace(/\s+/g, '');
+        if (!/^\d{6,8}$/.test(clean)) throw new Error('Enter the 6-digit code from your authenticator app.');
+        const factorId = factors[0]?.id;
+        if (!factorId) throw new Error('No authenticator is registered on this account.');
+        await completeMfa(factorId, clean);
     });
 
     const doForgot = () => run(async () => {
@@ -68,12 +81,13 @@ export function AuthPage() {
         e.preventDefault();
         if (mode === 'signin') doSignIn();
         else if (mode === 'signup') doSignUp();
+        else if (mode === 'mfa') doMfa();
         else if (mode === 'forgot') doForgot();
         else if (mode === 'verify') resend();
     };
 
-    const title = mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create your account' : mode === 'forgot' ? 'Reset your password' : mode === 'verify' ? 'Verify your email' : 'Check your inbox';
-    const sub = mode === 'signin' ? 'Sign in to your Termax terminal' : mode === 'signup' ? (config.requireEmailVerification ? 'We will send a verification link to your email' : 'Free access to charts, trading, bots and MaxAI') : mode === 'forgot' ? 'We will email you a link to set a new password' : mode === 'verify' ? `We sent a link to ${email || 'your email'}. Open it, then sign in.` : `A reset link is on its way to ${email}.`;
+    const title = mode === 'mfa' ? 'Two-factor authentication' : mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create your account' : mode === 'forgot' ? 'Reset your password' : mode === 'verify' ? 'Verify your email' : 'Check your inbox';
+    const sub = mode === 'mfa' ? `Enter the 6-digit code from your authenticator app${factors[0]?.friendlyName ? ` (${factors[0].friendlyName})` : ''}` : mode === 'signin' ? 'Sign in to your Termax terminal' : mode === 'signup' ? (config.requireEmailVerification ? 'We will send a verification link to your email' : 'Free access to charts, trading, bots and MaxAI') : mode === 'forgot' ? 'We will email you a link to set a new password' : mode === 'verify' ? `We sent a link to ${email || 'your email'}. Open it, then sign in.` : `A reset link is on its way to ${email}.`;
 
     return (
         <div className="auth">
@@ -97,13 +111,18 @@ export function AuthPage() {
                             <Field label="Password" hint="At least 8 characters with a letter and a digit"><div className="inp"><input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" /></div></Field>
                         </>
                     )}
+                    {mode === 'mfa' && (
+                        <Field label="Authentication code">
+                            <div className="inp"><input value={code} onChange={e => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={8} autoFocus style={{ letterSpacing: 6, fontSize: 18, textAlign: 'center' }} placeholder="000000" /></div>
+                        </Field>
+                    )}
                     {(mode === 'forgot' || mode === 'verify') && (
                         <Field label="Email"><div className="inp"><input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" autoFocus /></div></Field>
                     )}
                     {error && <div className="note err">{error}</div>}
                     {mode !== 'sent' && (
                         <button className="btn primary block" disabled={busy} type="submit">
-                            {busy ? <span className="spinner" /> : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Resend verification email'}
+                            {busy ? <span className="spinner" /> : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : mode === 'mfa' ? 'Verify and sign in' : 'Resend verification email'}
                         </button>
                     )}
                 </form>

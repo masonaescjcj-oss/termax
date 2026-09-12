@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../api';
 import { primaryAccount, useAuth } from '../auth';
 import { money, useToast } from '../components/ui';
+import { TwoFactorCard } from '../components/TwoFactor';
 
 export function SettingsPage() {
     const { user, updateMe, signOut, refresh } = useAuth();
@@ -51,6 +52,7 @@ export function SettingsPage() {
                     </div>
                 )}
             </div>
+            <TwoFactorCard />
             <div className="card" style={{ marginTop: 16 }}>
                 <h3>Preferences</h3>
                 <label className="row" style={{ gap: 8, padding: '8px 0', cursor: 'pointer' }}><input type="checkbox" checked={s.notifications !== false} onChange={e => setSetting({ notifications: e.target.checked })} /> Notifications for fills, stops and bot events</label>
