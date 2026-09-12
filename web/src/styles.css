@@ -466,3 +466,15 @@ select.box option, .toolbar-row select option { background: var(--panel-2); }
 .draft-card .kv-list div { padding: 5px 0; }
 .draft-card input.vol { width: 52px; height: 22px; border: 1px solid var(--line); border-radius: 4px; background: transparent; padding: 0 6px; text-align: right; font-variant-numeric: tabular-nums; }
 .btn.ghost.active { background: var(--panel-3); color: var(--text-strong); }
+
+/* Screener */
+.chip-btn { height: 28px; padding: 0 11px; border-radius: 14px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); }
+.chip-btn:hover { background: var(--panel-3); }
+.chip-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.chip-btn.ghost { background: transparent; }
+.chip-btn.ghost.active { background: var(--panel-3); border-color: var(--line); color: var(--text-strong); }
+.range { position: relative; display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--red-soft), var(--panel-3), var(--green-soft)); }
+.range i { position: absolute; top: -2px; width: 4px; height: 10px; margin-left: -2px; border-radius: 2px; background: var(--text-strong); }
+.sent { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--red); overflow: hidden; }
+.sent i { display: block; height: 100%; background: var(--green); }
+.sent.big { display: block; width: 100%; height: 10px; border-radius: 5px; }

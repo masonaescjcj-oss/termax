@@ -11,6 +11,7 @@ import { setupTradeSockets } from './sockets/tradeSocket';
 import { initTradingEngine } from './controllers/tradeController';
 import { initBot } from './bot';
 import { alertEngine } from './services/alertEngine';
+import { screener } from './services/screener';
 import { feedRouter } from './services/feeds';
 import { seedCampaigns } from './controllers/campaignController';
 import { initVenues } from './services/venues';
@@ -112,6 +113,14 @@ const startServer = async () => {
             };
             void loadAlerts();
             setInterval(loadAlerts, 5 * 60_000);
+
+            // The screener table: first pass a minute after boot (the feeds
+            // come first), then every ten minutes. Off with SCREENER=off.
+            if (process.env.SCREENER !== 'off') {
+                const runScreener = () => screener.refresh().then(n => console.log(`📋 [Screener] ${n} symbols ranked`)).catch((e: any) => console.log('Screener notice:', e.message));
+                setTimeout(runScreener, 60_000);
+                setInterval(runScreener, 10 * 60_000);
+            }
         }, 100);
 
     } catch (error) {

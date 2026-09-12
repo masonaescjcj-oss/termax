@@ -14,6 +14,7 @@ import { useAccountState } from '../terminal/account';
 const NAV: Array<{ to: string; label: string }> = [
     { to: '/', label: 'Chart' },
     { to: '/markets', label: 'Markets' },
+    { to: '/screener', label: 'Screener' },
     { to: '/bots', label: 'Bots' },
     { to: '/backtests', label: 'Backtests' },
     { to: '/journal', label: 'Journal' },

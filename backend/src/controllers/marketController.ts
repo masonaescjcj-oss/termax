@@ -5,6 +5,8 @@ import { supabase } from '../config/supabase';
 import { mapPromotedSymbolToCamel } from '../utils/mapper';
 import YahooFinance from 'yahoo-finance2';
 import { priceCache } from '../sockets/marketSocket';
+import { screener } from '../services/screener';
+import { getSentiment } from '../services/sentiment';
 
 export const getPrices = (req: Request, res: Response) => {
     res.json({ success: true, priceCache });
@@ -78,6 +80,98 @@ const mapYahooSymbol = (symbol: string) => {
 };
 
 /**
+ * History from a real source — Binance klines for crypto, Yahoo for the
+ * rest — or an empty array when neither answers. Shared by the chart
+ * endpoint (which then falls back to synthetic bars so a chart always
+ * draws) and the screener (which must never rank synthetic data).
+ */
+export async function loadSourceCandles(symbol: string, interval: string, limit: number): Promise<any[]> {
+    let candlesToSave: any[] = [];
+
+    // 1. For Crypto: Try Binance klines FIRST (instant & resilient)
+    if (isCrypto(symbol)) {
+        const binanceSymbol = symbol.replace(/[\/-]/g, '');
+        const BINANCE_MIRRORS = [
+            'https://api.binance.com/api/v3',
+            'https://api1.binance.com/api/v3',
+            'https://api2.binance.com/api/v3',
+            'https://api.binance.us/api/v3'
+        ];
+
+        for (const mirror of BINANCE_MIRRORS) {
+            try {
+                const response = await axios.get(`${mirror}/klines`, {
+                    params: { symbol: binanceSymbol, interval, limit },
+                    timeout: 4000
+                });
+
+                if (response.data && Array.isArray(response.data)) {
+                    candlesToSave = response.data.map((item: any[]) => ({
+                        symbol,
+                        interval,
+                        timestamp: new Date(item[0]),
+                        open: parseFloat(item[1]),
+                        high: parseFloat(item[2]),
+                        low: parseFloat(item[3]),
+                        close: parseFloat(item[4]),
+                        volume: parseFloat(item[5])
+                    }));
+                    if (candlesToSave.length > 0) break;
+                }
+            } catch (err: any) {
+                console.log(`Binance klines mirror ${mirror} failed for ${symbol}: ${err.message}`);
+            }
+        }
+    }
+
+    // 2. For Traditional assets (or crypto fallback): Try Yahoo Finance
+    if (candlesToSave.length === 0) {
+        try {
+            const yahooSymbol = mapYahooSymbol(symbol);
+            const yFinanceInterval = mapYahooInterval(interval);
+
+            let lookbackDays = 90;
+            if (yFinanceInterval === '1m') lookbackDays = 5;
+            else if (['2m', '5m', '15m', '30m'].includes(yFinanceInterval)) lookbackDays = 50;
+            else if (yFinanceInterval === '1d' || yFinanceInterval === '1wk') lookbackDays = 365 * 2;
+
+            const period1 = new Date();
+            period1.setDate(period1.getDate() - lookbackDays);
+
+            const queryOptions = { period1, interval: yFinanceInterval };
+            const result = await yahooFinance.chart(yahooSymbol, queryOptions as any);
+
+            const quotes = (result.quotes as any[]) || [];
+            // All four prices, not just open and close: Yahoo returns
+            // nulls for illiquid minutes, and a null high or low
+            // becomes a NaN that draws nothing on the chart — missing
+            // data without the honesty of looking missing.
+            const validQuotes = quotes.filter(item =>
+                item
+                && Number.isFinite(item.open) && Number.isFinite(item.high)
+                && Number.isFinite(item.low) && Number.isFinite(item.close));
+            const limitedResult = validQuotes.slice(-limit);
+
+            candlesToSave = limitedResult.map((item: any) => ({
+                symbol,
+                interval,
+                timestamp: item.date,
+                open: item.open,
+                high: item.high,
+                low: item.low,
+                close: item.close,
+                volume: item.volume || 0
+            }));
+        } catch (err: any) {
+            console.log(`Yahoo historical failed for ${symbol}. Error: ${err.message}`);
+            candlesToSave = [];
+        }
+    }
+
+    return candlesToSave;
+}
+
+/**
  * Get historical candles for a symbol
  * GET /api/v1/market/candles/:symbol?interval=1h&limit=100
  */
@@ -87,87 +181,7 @@ export const getCandles = async (req: Request, res: Response) => {
         const interval = (req.query.interval as string) || '1h';
         let limit = parseInt(req.query.limit as string) || 100;
 
-        let candlesToSave: any[] = [];
-
-        // 1. For Crypto: Try Binance klines FIRST (instant & resilient)
-        if (isCrypto(symbol)) {
-            const binanceSymbol = symbol.replace(/[\/-]/g, '');
-            const BINANCE_MIRRORS = [
-                'https://api.binance.com/api/v3',
-                'https://api1.binance.com/api/v3',
-                'https://api2.binance.com/api/v3',
-                'https://api.binance.us/api/v3'
-            ];
-
-            for (const mirror of BINANCE_MIRRORS) {
-                try {
-                    const response = await axios.get(`${mirror}/klines`, {
-                        params: { symbol: binanceSymbol, interval, limit },
-                        timeout: 4000
-                    });
-
-                    if (response.data && Array.isArray(response.data)) {
-                        candlesToSave = response.data.map((item: any[]) => ({
-                            symbol,
-                            interval,
-                            timestamp: new Date(item[0]),
-                            open: parseFloat(item[1]),
-                            high: parseFloat(item[2]),
-                            low: parseFloat(item[3]),
-                            close: parseFloat(item[4]),
-                            volume: parseFloat(item[5])
-                        }));
-                        if (candlesToSave.length > 0) break;
-                    }
-                } catch (err: any) {
-                    console.log(`Binance klines mirror ${mirror} failed for ${symbol}: ${err.message}`);
-                }
-            }
-        }
-
-        // 2. For Traditional assets (or crypto fallback): Try Yahoo Finance
-        if (candlesToSave.length === 0) {
-            try {
-                const yahooSymbol = mapYahooSymbol(symbol);
-                const yFinanceInterval = mapYahooInterval(interval);
-
-                let lookbackDays = 90;
-                if (yFinanceInterval === '1m') lookbackDays = 5;
-                else if (['2m', '5m', '15m', '30m'].includes(yFinanceInterval)) lookbackDays = 50;
-                else if (yFinanceInterval === '1d' || yFinanceInterval === '1wk') lookbackDays = 365 * 2;
-
-                const period1 = new Date();
-                period1.setDate(period1.getDate() - lookbackDays);
-
-                const queryOptions = { period1, interval: yFinanceInterval };
-                const result = await yahooFinance.chart(yahooSymbol, queryOptions as any);
-
-                const quotes = (result.quotes as any[]) || [];
-                // All four prices, not just open and close: Yahoo returns
-                // nulls for illiquid minutes, and a null high or low
-                // becomes a NaN that draws nothing on the chart — missing
-                // data without the honesty of looking missing.
-                const validQuotes = quotes.filter(item =>
-                    item
-                    && Number.isFinite(item.open) && Number.isFinite(item.high)
-                    && Number.isFinite(item.low) && Number.isFinite(item.close));
-                const limitedResult = validQuotes.slice(-limit);
-
-                candlesToSave = limitedResult.map((item: any) => ({
-                    symbol,
-                    interval,
-                    timestamp: item.date,
-                    open: item.open,
-                    high: item.high,
-                    low: item.low,
-                    close: item.close,
-                    volume: item.volume || 0
-                }));
-            } catch (err: any) {
-                console.log(`Yahoo historical failed for ${symbol}. Error: ${err.message}`);
-                candlesToSave = [];
-            }
-        }
+        let candlesToSave: any[] = await loadSourceCandles(symbol, interval, limit);
 
         // 3. Fallback to Mock Candles if both failed (ensures chart always loads)
         if (candlesToSave.length === 0) {
@@ -241,5 +255,22 @@ export const getCandles = async (req: Request, res: Response) => {
     } catch (error: any) {
         console.error('getHistoricalCandles Error:', error.message);
         res.status(500).json({ error: 'Failed to fetch market data' });
+    }
+};
+
+/** GET /market/screener — the cached table; never computed on request. */
+export const getScreener = (req: Request, res: Response) => {
+    const rows = screener.rows();
+    res.json({ success: true, data: { rows, updatedAt: screener.updatedAt(), refreshing: screener.isRunning() } });
+};
+
+/** GET /market/sentiment?symbols=A,B — Termax traders' positioning. */
+export const getMarketSentiment = async (req: Request, res: Response) => {
+    try {
+        const raw = String(req.query.symbols ?? '').trim();
+        const symbols = raw ? raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 50) : undefined;
+        res.json({ success: true, data: await getSentiment(symbols) });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
     }
 };

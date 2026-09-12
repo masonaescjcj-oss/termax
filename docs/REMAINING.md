@@ -245,3 +245,17 @@ filled in); stop and target lines of open positions drag and call
 
 Not yet: dragging the entry of a pending order; money figures on the tool
 are in the quote currency (no FX conversion for JPY/CHF crosses).
+
+## Screener and trader sentiment
+
+Shipped: `GET /market/screener` — every known instrument with last, 24h
+change, RSI(14), EMA20/50 trend, ATR%, volume ratio and 20-bar range
+position, computed from real hourly bars on a ten-minute timer (never
+from the chart endpoint's synthetic fallback; symbols without a source
+are absent, not invented). `GET /market/sentiment` — Termax traders'
+long/short positioning per symbol, one DB read a minute. Web: Screener
+page with presets (gainers, losers, RSI extremes, trend, breakout,
+volume spike, crowded trades) and a sentiment bar in the Details panel.
+
+Not yet: screener on other timeframes (the table is hourly only); alerts
+on screener conditions; sentiment history over time.
