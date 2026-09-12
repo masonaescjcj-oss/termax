@@ -9,6 +9,7 @@ import { initFeeds, feedRouter } from '../services/feeds';
 import { liveBars } from '../services/candles/liveBars';
 import { botRunner } from '../services/bots/runner';
 import { roundPrice } from '../config/instruments';
+import { alertEngine } from '../services/alertEngine';
 
 const yahooFinance = new YahooFinance();
 const BINANCE_API_URL = 'https://api.binance.com/api/v3';
@@ -284,7 +285,11 @@ export const setupMarketSockets = (io: Server) => {
         if (dirtySymbols.size === 0) return;
         for (const symbol of dirtySymbols) {
             const payload = quotePayload(symbol);
-            if (payload) io.to(symbol).emit('priceUpdate', payload);
+            if (payload) {
+                io.to(symbol).emit('priceUpdate', payload);
+                // Server-side alerts ride the same tick; a map lookup per symbol.
+                alertEngine.check(symbol, payload.price);
+            }
         }
         dirtySymbols.clear();
     }, 300);

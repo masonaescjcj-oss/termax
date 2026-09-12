@@ -22,7 +22,7 @@ type Auth = { id: string; username: string; role: string };
  */
 const AUTH_TTL_MS = 60_000;
 
-const authenticateSocket = async (socket: Socket, token: string): Promise<Auth | null> => {
+export const authenticateSocket = async (socket: Socket, token: string): Promise<Auth | null> => {
     if (!token || typeof token !== 'string') return null;
 
     const cached = (socket.data as any).authCache;

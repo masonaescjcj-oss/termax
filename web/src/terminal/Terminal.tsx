@@ -7,7 +7,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KLineData } from 'klinecharts';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { notify, setAlertAnnouncer } from '../alerts';
 import { accountIdOf, primaryAccount, useAuth } from '../auth';
 import { Chat } from '../components/Chat';
 import { Ic } from '../components/icons';
@@ -85,13 +84,6 @@ export function Terminal() {
         window.addEventListener('tx:search', open);
         return () => window.removeEventListener('tx:search', open);
     }, []);
-    useEffect(() => {
-        setAlertAnnouncer((a, price) => {
-            const text = `${a.symbol} is ${a.condition} ${fmtPrice(a.symbol, a.price)} (now ${fmtPrice(a.symbol, price)})${a.note ? ` — ${a.note}` : ''}`;
-            toast(`Alert: ${text}`, 'ok');
-            void notify('Termax price alert', text);
-        });
-    }, [toast]);
 
     const pick = useCallback((s: string) => {
         setSearch(false);

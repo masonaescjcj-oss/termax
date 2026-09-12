@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { BASE } from './api';
+import { BASE, TOKEN_KEY } from './api';
 
 export interface Quote {
     symbol: string;
@@ -43,7 +43,13 @@ function ensureSocket(): Socket {
         statusListeners.forEach(fn => fn(true));
         const symbols = [...wanted.keys()];
         if (symbols.length) socket!.emit('subscribe', { symbols });
+        joinUserRoom();
     });
+    // Private events for the signed-in trader: fills, closes, stop-outs and
+    // notifications. The server verifies the token before joining the room.
+    for (const ev of ['positionOpened', 'positionClosed', 'stopOut', 'notification'] as const) {
+        socket.on(ev, (payload: any) => userListeners.forEach(fn => fn(ev, payload)));
+    }
     socket.on('disconnect', () => {
         connected = false;
         statusListeners.forEach(fn => fn(false));
@@ -70,6 +76,32 @@ function ensureSocket(): Socket {
 }
 
 export function isConnected() { return connected; }
+
+type UserEvent = 'positionOpened' | 'positionClosed' | 'stopOut' | 'notification';
+const userListeners = new Set<(ev: UserEvent, payload: any) => void>();
+let joinedToken = '';
+
+function joinUserRoom() {
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    if (!socket?.connected) return;
+    if (!token) { if (joinedToken) socket.emit('leaveUserRoom'); joinedToken = ''; return; }
+    socket.emit('joinUserRoom', { token });
+    joinedToken = token;
+}
+
+/** Call after sign-in/out so the private room follows the session. */
+export function syncUserRoom() {
+    ensureSocket();
+    if ((localStorage.getItem(TOKEN_KEY) || '') !== joinedToken) joinUserRoom();
+}
+
+/** Subscribe to the signed-in trader's private events. */
+export function onUserEvent(fn: (ev: UserEvent, payload: any) => void) {
+    ensureSocket();
+    syncUserRoom();
+    userListeners.add(fn);
+    return () => { userListeners.delete(fn); };
+}
 
 /** Open the feed socket without subscribing — so the status light is honest on pages without a chart. */
 export function connectFeed() { ensureSocket(); }

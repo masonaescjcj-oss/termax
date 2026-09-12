@@ -20,6 +20,7 @@
 import Bot, { BotRow } from '../../models/Bot';
 import BotEvent from '../../models/BotEvent';
 import Position from '../../models/Position';
+import { notify } from '../notify';
 import {
     closeSimulatedAtMarket, openSimulatedOrder,
 } from '../../controllers/tradeController';
@@ -286,6 +287,12 @@ export class BotRunner {
                 messageEn: verdict.en,
                 evidence: { ...verdict.evidence, action: cfg.action },
             }).catch(() => undefined);
+            void notify(bot.row.userId, {
+                kind: 'bot',
+                title: `${bot.row.name}: ${cfg.action === 'PAUSE' ? 'paused by the watchdog' : 'watchdog warning'}`,
+                body: verdict.en,
+                data: { botId: bot.row.id, key: verdict.key, action: cfg.action },
+            });
 
             if (cfg.action === 'PAUSE') {
                 console.warn(`[Watchdog] Pausing ${bot.row.name}: ${verdict.en}`);

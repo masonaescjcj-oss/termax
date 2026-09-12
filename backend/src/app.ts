@@ -17,6 +17,8 @@ import customIndicatorRoutes from './routes/customIndicatorRoutes';
 import libraryRoutes from './routes/libraryRoutes';
 import replayRoutes from './routes/replayRoutes';
 import journalRoutes from './routes/journalRoutes';
+import alertRoutes from './routes/alertRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 const app: Application = express();
 
@@ -62,6 +64,8 @@ app.use('/api/v1/indicators', customIndicatorRoutes);
 app.use('/api/v1/library', libraryRoutes);
 app.use('/api/v1/replay', replayRoutes);
 app.use('/api/v1/journal', journalRoutes);
+app.use('/api/v1/alerts', alertRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Basic Error Handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

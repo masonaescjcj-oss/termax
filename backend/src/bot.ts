@@ -7,6 +7,24 @@ import path from 'path';
 dotenv.config();
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
+
+// The running bot, once initBot() has created it, so other services (the
+// notification fan-out) can message a linked account without a second
+// polling instance.
+let botInstance: TelegramBot | null = null;
+
+/** Send an HTML message to a chat; silently a no-op when the bot is off. */
+export async function sendTelegramMessage(chatId: string | number, html: string): Promise<boolean> {
+    if (!botInstance) return false;
+    try {
+        await botInstance.sendMessage(chatId, html, { parse_mode: 'HTML', disable_web_page_preview: true } as any);
+        return true;
+    } catch (e: any) {
+        // The plain-text fallback covers a message the HTML parser rejects.
+        try { await botInstance.sendMessage(chatId, html.replace(/<[^>]*>/g, '')); return true; }
+        catch (e2: any) { console.warn('[telegram] send failed:', e2?.message || e?.message); return false; }
+    }
+}
 const webAppUrl = process.env.TELEGRAM_WEB_APP_URL || 'https://your-mini-app-url.com';
 const ADMIN_ID = 399207185;
 
@@ -102,6 +120,7 @@ export const initBot = async () => {
             timeout: 30000
         } as any
     });
+    botInstance = bot;
     
     bot.on('polling_error', (error: any) => {
         console.error('🤖 Telegram Bot polling error:', error.message || error);

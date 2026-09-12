@@ -218,3 +218,18 @@ Not yet:
 - Alerts (price crossing a level → notification).
 - Light theme.
 - Deployment: a Vercel project with root directory `web` and `VITE_API_URL`.
+
+## Server-side alerts and notifications
+
+Shipped: `price_alerts`, `notifications`, `push_tokens` (migration 015);
+the alert engine checks every changed symbol on the feed's flush tick and
+fires once; `notify()` fans out to the inbox, the trader's socket room,
+Telegram (linked accounts) and Expo push (registered tokens). SL/TP hits,
+pending fills/cancels, stop-outs and watchdog trips all notify. The trade
+socket's user room now requires the session token — a bare user id no
+longer joins anything.
+
+Not yet:
+- Mobile push registration (`expo-notifications` + `POST /notifications/push-token`); the server side is ready.
+- Mobile inbox screen for `GET /notifications`.
+- Alert on indicator conditions (RSI crossing, EMA touch) rather than price only.

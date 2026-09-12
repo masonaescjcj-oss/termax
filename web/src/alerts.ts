@@ -1,70 +1,72 @@
 /**
- * Price alerts. Kept in the browser (they are the trader's own reminders,
- * not orders), checked against the live feed, and announced with a toast
- * and — when the tab is allowed to — a system notification.
+ * Price alerts, kept on the server so they fire whether or not this tab is
+ * open — the terminal, the app and Telegram all hear about the same alert.
+ * This module is the client cache plus the calls that change it.
  */
 import { useEffect, useState } from 'react';
-import { watch } from './market';
+import { api, data } from './api';
+import { onUserEvent } from './market';
 
 export interface PriceAlert {
     id: string;
     symbol: string;
     price: number;
     condition: 'above' | 'below';
-    note?: string;
-    createdAt: number;
-    triggeredAt: number | null;
+    note: string | null;
+    status: 'active' | 'triggered' | 'cancelled';
+    triggeredAt: string | null;
+    triggeredPrice: number | null;
+    createdAt: string;
 }
 
-const KEY = 'tx.alerts';
-let alerts: PriceAlert[] = load();
+let cache: PriceAlert[] | null = null;
+let loading: Promise<PriceAlert[]> | null = null;
 const listeners = new Set<(a: PriceAlert[]) => void>();
-const watching = new Map<string, () => void>();
-let announce: ((a: PriceAlert, price: number) => void) | null = null;
+const emit = () => listeners.forEach(fn => fn(cache ?? []));
 
-function load(): PriceAlert[] {
-    try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; }
-}
-function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(alerts)); } catch { /* storage unavailable */ }
-    listeners.forEach(fn => fn(alerts));
-    syncWatches();
+export async function loadAlerts(force = false): Promise<PriceAlert[]> {
+    if (cache && !force) return cache;
+    if (loading) return loading;
+    loading = data<PriceAlert[]>('/alerts').then(rows => { cache = rows; emit(); return rows; }).finally(() => { loading = null; });
+    return loading;
 }
 
-function syncWatches() {
-    const active = new Set(alerts.filter(a => !a.triggeredAt).map(a => a.symbol));
-    for (const [sym, off] of watching) if (!active.has(sym)) { off(); watching.delete(sym); }
-    for (const sym of active) {
-        if (watching.has(sym)) continue;
-        watching.set(sym, watch(sym, q => {
-            let changed = false;
-            for (const a of alerts) {
-                if (a.symbol !== sym || a.triggeredAt) continue;
-                const hit = a.condition === 'above' ? q.price >= a.price : q.price <= a.price;
-                if (hit) { a.triggeredAt = Date.now(); changed = true; announce?.(a, q.price); }
-            }
-            if (changed) save();
-        }));
-    }
+export async function addAlert(input: { symbol: string; price: number; condition: 'above' | 'below'; note?: string }) {
+    const row = await data<PriceAlert>('/alerts', { method: 'POST', body: input });
+    cache = [row, ...(cache ?? [])];
+    emit();
+    return row;
+}
+export async function removeAlert(id: string) {
+    await api(`/alerts/${id}`, { method: 'DELETE' });
+    cache = (cache ?? []).filter(a => a.id !== id);
+    emit();
+}
+export async function rearmAlert(id: string) {
+    const row = await data<PriceAlert>(`/alerts/${id}/rearm`, { method: 'POST' });
+    cache = (cache ?? []).map(a => (a.id === id ? row : a));
+    emit();
+}
+export async function clearTriggered() {
+    await api('/alerts/triggered', { method: 'DELETE' });
+    cache = (cache ?? []).filter(a => a.status !== 'triggered');
+    emit();
 }
 
-export function setAlertAnnouncer(fn: (a: PriceAlert, price: number) => void) {
-    announce = fn;
-    syncWatches();
-}
+/** Forget the cache on sign-out so the next account does not see the last one's alerts. */
+export function resetAlertCache() { cache = null; emit(); }
 
-export function addAlert(input: Omit<PriceAlert, 'id' | 'createdAt' | 'triggeredAt'>) {
-    alerts = [{ ...input, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, createdAt: Date.now(), triggeredAt: null }, ...alerts];
-    save();
-}
-export function removeAlert(id: string) { alerts = alerts.filter(a => a.id !== id); save(); }
-export function resetAlert(id: string) { alerts = alerts.map(a => (a.id === id ? { ...a, triggeredAt: null } : a)); save(); }
-export function clearTriggered() { alerts = alerts.filter(a => !a.triggeredAt); save(); }
-
-export function useAlerts(): PriceAlert[] {
-    const [list, setList] = useState(alerts);
-    useEffect(() => { listeners.add(setList); return () => { listeners.delete(setList); }; }, []);
-    return list;
+export function useAlerts(): { alerts: PriceAlert[]; loaded: boolean } {
+    const [list, setList] = useState<PriceAlert[]>(cache ?? []);
+    const [loaded, setLoaded] = useState(cache !== null);
+    useEffect(() => {
+        listeners.add(setList);
+        loadAlerts().then(() => setLoaded(true)).catch(() => setLoaded(true));
+        // A fired alert changes its row on the server; refresh when told.
+        const off = onUserEvent((ev, payload) => { if (ev === 'notification' && payload?.kind === 'price_alert') void loadAlerts(true); });
+        return () => { listeners.delete(setList); off(); };
+    }, []);
+    return { alerts: list, loaded };
 }
 
 export async function notify(title: string, body: string) {

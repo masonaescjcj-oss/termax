@@ -358,17 +358,8 @@ function runPositionsModule(global, require, _$_IMPORT_DEFAULT, _$_IMPORT_ALL, m
         const token = await (0, _utilsStorage.getItemAsync)('accessToken');
         if (token) {
           try {
-            // Decode userId from JWT (safe base64 decode)
-            const base64Url = token.split('.')[1];
-            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-            const payloadStr = decodeBase64(base64);
-            if (payloadStr) {
-              const payload = JSON.parse(payloadStr);
-              const userId = payload.sub || payload.id;
-              if (userId) {
-                socket.emit('joinUserRoom', userId);
-              }
-            }
+            // The server verifies the token and joins the caller's own room.
+            socket.emit('joinUserRoom', { token });
           } catch (e) {
             console.error('Failed to decode token for socket room', e);
           }

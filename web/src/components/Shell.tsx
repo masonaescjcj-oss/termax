@@ -5,7 +5,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { accountIdOf, primaryAccount, useAuth } from '../auth';
-import { connectFeed, useFeedStatus } from '../market';
+import { connectFeed, syncUserRoom, useFeedStatus } from '../market';
+import { Bell } from './Bell';
 import { money, useClickOutside } from './ui';
 import { Ic } from './icons';
 import { useAccountState } from '../terminal/account';
@@ -31,7 +32,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     const ref = useClickOutside<HTMLDivElement>(open, close);
     const nav = useNavigate();
     const loc = useLocation();
-    useEffect(() => { connectFeed(); }, []);
+    useEffect(() => { connectFeed(); syncUserRoom(); }, [user?.id]);
     const openSearch = () => {
         if (loc.pathname === '/' || loc.pathname.startsWith('/chart/')) window.dispatchEvent(new Event('tx:search'));
         else nav('/', { state: { search: true } });
@@ -61,6 +62,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     <span>Balance <b className="num">{money(state?.balance ?? acc?.balance ?? 0)}</b></span>
                     <span className="eq">Equity <b className="num">{money(state?.equity ?? acc?.balance ?? 0)}</b></span>
                 </div>
+                <Bell />
                 <div className="menu" ref={ref}>
                     <button className="avatar" onClick={() => setOpen(o => !o)} aria-label="Account menu">
                         {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : initials}

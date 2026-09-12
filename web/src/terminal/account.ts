@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { data, q } from '../api';
+import { onUserEvent } from '../market';
 
 export interface Position {
     id: string;
@@ -85,7 +86,17 @@ export function refreshAllBooks() {
     for (const id of listeners.keys()) if (listeners.get(id)!.size) void refreshBook(id);
 }
 
+// Fills, closes and stop-outs arrive over the user room; re-pull the book
+// on each so the table moves with the server, not with the 10s poll.
+let wiredEvents = false;
+function wireEvents() {
+    if (wiredEvents) return;
+    wiredEvents = true;
+    onUserEvent(ev => { if (ev !== 'notification') refreshAllBooks(); });
+}
+
 function useBook(accountId: string): Book | null {
+    wireEvents();
     const [book, setBook] = useState<Book | null>(books.get(accountId) ?? null);
     useEffect(() => {
         if (!listeners.has(accountId)) listeners.set(accountId, new Set());

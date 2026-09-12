@@ -1598,17 +1598,8 @@ export default function ChartScreen({ navigation, route }: any) {
       socket.emit('subscribe', symbol);
       // Join user room for position updates
       const token = await getItemAsync('accessToken');
-      if (token) {
-        try {
-          const base64Url = token.split('.')[1];
-          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-          const payload = JSON.parse(atob(base64));
-          const userId = payload.sub || payload.id;
-          if (userId) socket.emit('joinUserRoom', userId);
-        } catch (e) {
-          console.log('[Socket] Error joining user room in ChartScreen:', e);
-        }
-      }
+      // The server verifies the token and joins the caller's own room.
+      if (token) socket.emit('joinUserRoom', { token });
     });
 
     // Debounce fetchPositions to prevent API DDOS from rapid socket events

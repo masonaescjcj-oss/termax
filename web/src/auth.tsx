@@ -9,6 +9,9 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, REFRESH_KEY, setUnauthorizedHandler, TOKEN_KEY, USER_KEY } from './api';
+import { resetAlertCache } from './alerts';
+import { syncUserRoom } from './market';
+import { resetNotifications } from './notifications';
 
 export type Account = {
     id: string;
@@ -66,6 +69,9 @@ function clearSession() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
+    resetAlertCache();
+    resetNotifications();
+    syncUserRoom();
 }
 
 const isNetworkError = (e: unknown) => e instanceof ApiError && e.status === 0;

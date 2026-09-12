@@ -19,6 +19,7 @@ import TradeHistory from '../models/TradeHistory';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
+import { notify } from '../services/notify';
 import { recordClosedTrade } from '../services/ai/statsRollup';
 import { evaluateRiskGuard, riskGuardConfig } from '../services/riskGuard';
 import { venueKindForAccount } from '../services/venues';
@@ -343,6 +344,12 @@ export async function processTPSL(symbol: string, currentPrice: number) {
             removeFromIndex(posId, pos.symbol);
             console.log(`${reason === 'TP' ? '🟢' : '🔴'} [${reason}] ${pos.side} ${pos.volume} ${pos.symbol} closed at ${closePrice}. PnL: $${pos.finalProfit.toFixed(2)}`);
             emitPositionUpdate(pos.userId.toString(), 'positionClosed', { positionId: posId, reason });
+            void notify(pos.userId.toString(), {
+                kind: 'position',
+                title: `${reason === 'TP' ? 'Take profit' : 'Stop loss'} hit: ${pos.side} ${pos.volume} ${pos.symbol}`,
+                body: `Closed at ${closePrice} for ${pos.finalProfit >= 0 ? '+' : '-'}$${Math.abs(pos.finalProfit).toFixed(2)}.`,
+                data: { positionId: posId, symbol: pos.symbol, reason, pnl: pos.finalProfit },
+            });
         } catch (err) {
             pos.status = 'OPEN';
             console.error(`Error closing ${reason} for position ${posId}:`, err);
@@ -421,6 +428,12 @@ export async function processPendingOrders(
                 removeFromIndex(posId, pos.symbol);
                 console.log(`❌ [PENDING CANCELLED] ${pos.side} ${pos.volume} ${pos.symbol} — Insufficient margin ($${acct.freeMargin.toFixed(2)} < $${totalCost.toFixed(2)})`);
                 emitPositionUpdate(pos.userId.toString(), 'positionClosed', { positionId: posId, reason: 'MARGIN' });
+                void notify(pos.userId.toString(), {
+                    kind: 'position',
+                    title: `${pos.orderType} order cancelled: ${pos.side} ${pos.volume} ${pos.symbol}`,
+                    body: 'Not enough free margin to fill it when the price arrived.',
+                    data: { positionId: posId, symbol: pos.symbol, reason: 'MARGIN' },
+                });
                 continue;
             }
 
@@ -449,6 +462,12 @@ export async function processPendingOrders(
             const doc: any = pos.toJSON ? pos.toJSON() : pos;
             doc.id = doc._id;
             emitPositionUpdate(pos.userId.toString(), 'positionOpened', { position: doc });
+            void notify(pos.userId.toString(), {
+                kind: 'position',
+                title: `Order filled: ${pos.side} ${pos.volume} ${pos.symbol}`,
+                body: `${pos.orderType} filled at ${pos.entryPrice}.`,
+                data: { positionId: posId, symbol: pos.symbol, reason: 'FILLED' },
+            });
         } catch (err) {
             pos.status = 'PENDING';
             console.error(`Error activating pending order ${posId}:`, err);
@@ -728,6 +747,12 @@ async function processStopOutForAccount(userId: string, user: any, accountId: st
                     
                     // Emit to frontend
                     emitPositionUpdate(userId, 'stopOut', { positionId: posId });
+                    void notify(userId, {
+                        kind: 'margin',
+                        title: `Stop-out: ${pos.side} ${pos.volume} ${pos.symbol} closed`,
+                        body: `Margin level fell to ${acctState.marginLevel.toFixed(0)}%. Closed at ${pos.closePrice} for ${pos.finalProfit >= 0 ? '+' : '-'}$${Math.abs(pos.finalProfit).toFixed(2)}.`,
+                        data: { positionId: posId, symbol: pos.symbol, reason: 'STOP_OUT', marginLevel: acctState.marginLevel },
+                    });
                 } catch (err) {
                     pos.status = 'OPEN';
                     console.error(`Error processing stop-out for position ${posId}:`, err);

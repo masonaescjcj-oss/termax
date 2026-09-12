@@ -10,10 +10,11 @@ import { setupChatSockets } from './sockets/chatSocket';
 import { setupTradeSockets } from './sockets/tradeSocket';
 import { initTradingEngine } from './controllers/tradeController';
 import { initBot } from './bot';
+import { alertEngine } from './services/alertEngine';
+import { feedRouter } from './services/feeds';
 import { seedCampaigns } from './controllers/campaignController';
 import { initVenues } from './services/venues';
 import { botRunner } from './services/bots/runner';
-import { feedRouter } from './services/feeds';
 
 const PORT = process.env.PORT || 5000;
 
@@ -95,6 +96,22 @@ const startServer = async () => {
             } catch (e: any) {
                 console.log('Bot init notice:', e.message);
             }
+
+            // Price alerts: load the active set and make sure their symbols
+            // stream even when nobody has that chart open. Reloaded every
+            // five minutes to pick up rows written elsewhere.
+            const loadAlerts = async () => {
+                try {
+                    const n = await alertEngine.load();
+                    const symbols = alertEngine.symbols();
+                    if (symbols.length) feedRouter.subscribe(symbols).catch(() => undefined);
+                    if (n) console.log(`🔔 [Alerts] ${n} active alert(s) on ${symbols.length} symbol(s)`);
+                } catch (e: any) {
+                    console.log('Alert engine notice:', e.message);
+                }
+            };
+            void loadAlerts();
+            setInterval(loadAlerts, 5 * 60_000);
         }, 100);
 
     } catch (error) {
