@@ -19,6 +19,7 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
     const [tab, setTab] = useState<Tab>('positions');
     const [modify, setModify] = useState<Position | null>(null);
     const [closing, setClosing] = useState<string | null>(null);
+    const [closeDlg, setCloseDlg] = useState<Position | null>(null);
 
     const open = useMemo(() => positions.filter(p => p.status === 'OPEN'), [positions]);
     const pending = useMemo(() => positions.filter(p => p.status === 'PENDING'), [positions]);
@@ -28,11 +29,13 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
     const floating = open.reduce((s, p) => s + (markPnL(p, quotes[p.symbol]?.bid, quotes[p.symbol]?.ask) ?? 0), 0);
     const equity = account ? account.balance + floating : null;
 
-    const close = async (p: Position) => {
+    const close = async (p: Position, volume?: number) => {
         setClosing(p.id);
         try {
-            await api('/trade/close', { method: 'POST', body: { positionId: p.id, accountId, currentPrice: p.side === 'BUY' ? quotes[p.symbol]?.bid : quotes[p.symbol]?.ask } });
-            toast(`${p.status === 'PENDING' ? 'Order cancelled' : 'Position closed'}: ${p.symbol}`, 'ok');
+            const body: any = { positionId: p.id, accountId, currentPrice: p.side === 'BUY' ? quotes[p.symbol]?.bid : quotes[p.symbol]?.ask };
+            if (volume && volume < p.volume) body.volume = volume;
+            await api('/trade/close', { method: 'POST', body });
+            toast(p.status === 'PENDING' ? `Order cancelled: ${p.symbol}` : volume && volume < p.volume ? `Closed ${volume.toFixed(2)} of ${p.volume.toFixed(2)} ${p.symbol}` : `Position closed: ${p.symbol}`, 'ok');
             refreshAllBooks();
         } catch (e: any) { toast(e.message, 'err'); } finally { setClosing(null); }
     };
@@ -75,7 +78,7 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
                                         <td className="muted">{when(p.openTime)}</td>
                                         <td className="r">
                                             <button className="link-btn" onClick={() => setModify(p)}>Modify</button>
-                                            <button className="link-btn red" style={{ marginLeft: 10 }} disabled={closing === p.id} onClick={() => close(p)}>{closing === p.id ? '…' : 'Close'}</button>
+                                            <button className="link-btn red" style={{ marginLeft: 10 }} disabled={closing === p.id} onClick={() => setCloseDlg(p)}>{closing === p.id ? '…' : 'Close'}</button>
                                         </td>
                                     </tr>
                                 );
@@ -135,6 +138,7 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
                 <div><span>Leverage</span><b>1:{account?.leverage ?? '—'}</b></div>
             </div>
             {modify && <ModifyDialog p={modify} accountId={accountId} onClose={() => setModify(null)} />}
+            {closeDlg && <CloseDialog p={closeDlg} pnl={markPnL(closeDlg, quotes[closeDlg.symbol]?.bid, quotes[closeDlg.symbol]?.ask)} onClose={() => setCloseDlg(null)} onConfirm={vol => { const p = closeDlg; setCloseDlg(null); void close(p, vol); }} />}
         </>
     );
 }
@@ -175,6 +179,30 @@ function ModifyDialog({ p, accountId, onClose }: { p: Position; accountId: strin
                 <Field label="Trailing stop distance (price units)" hint="Moves the stop behind price once in profit. 0 disables."><NumberInput value={trail} onChange={setTrail} step={step * 10} digits={digits} placeholder="0" /></Field>
             </div>
             {err && <div className="note err" style={{ marginTop: 10 }}>{err}</div>}
+        </Modal>
+    );
+}
+
+/** Close all of it, or part of it — the server splits the position for a partial. */
+function CloseDialog({ p, pnl, onClose, onConfirm }: { p: Position; pnl: number | null; onClose: () => void; onConfirm: (volume: number) => void }) {
+    const [vol, setVol] = useState(p.volume.toFixed(2));
+    const v = parseFloat(vol) || 0;
+    const valid = v > 0 && v <= p.volume + 1e-9;
+    const partial = valid && v < p.volume - 1e-9;
+    const share = valid ? Math.min(1, v / p.volume) : 0;
+    return (
+        <Modal title={`Close ${p.side} ${p.volume.toFixed(2)} ${p.symbol}`} onClose={onClose}
+            footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn sell" disabled={!valid} onClick={() => onConfirm(v)}>{partial ? `Close ${v.toFixed(2)} lots` : 'Close position'}</button></>}>
+            <div className="kv" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}><span className="muted">Floating P/L</span><b className={pnlClass(pnl)}>{signed(pnl)}{partial && pnl != null ? <span className="muted"> → realise ≈ {signed(pnl * share)}</span> : null}</b></div>
+            <Field label="Volume to close (lots)" error={!valid && vol !== '' ? `Between 0.01 and ${p.volume.toFixed(2)}` : null}>
+                <NumberInput value={vol} onChange={setVol} step={0.01} min={0.01} max={p.volume} digits={2} />
+            </Field>
+            <div className="row" style={{ gap: 6, marginTop: 10 }}>
+                {[0.25, 0.5, 0.75, 1].map(f => (
+                    <button key={f} className={`btn ghost sm ${Math.abs(share - f) < 1e-6 ? 'active' : ''}`} onClick={() => setVol(Math.max(0.01, Math.round(p.volume * f * 100) / 100).toFixed(2))}>{f === 1 ? 'All' : `${f * 100}%`}</button>
+                ))}
+            </div>
+            {partial && <div className="note" style={{ marginTop: 12 }}>The rest ({(p.volume - v).toFixed(2)} lots) stays open with the same stop and target.</div>}
         </Modal>
     );
 }

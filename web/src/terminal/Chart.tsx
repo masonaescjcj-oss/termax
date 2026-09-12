@@ -9,9 +9,12 @@ import { dispose, init, type Chart as KChart, type KLineData } from 'klinecharts
 import { fetchCandles, TF_MS, watch, type Quote, type Timeframe } from '../market';
 import { digitsFor, fmtPrice } from '../symbols';
 import type { Position } from './account';
+import { draftFromPoints, ensurePositionTool, type PositionDraft, type PositionToolData } from './positionTool';
+
+ensurePositionTool();
 
 export type ChartType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area' | 'line';
-export type DrawTool = 'cursor' | 'segment' | 'straightLine' | 'rayLine' | 'horizontalStraightLine' | 'verticalStraightLine' | 'priceLine' | 'priceChannelLine' | 'fibonacciLine' | 'rect' | 'simpleAnnotation' | 'simpleTag';
+export type DrawTool = 'cursor' | 'longPosition' | 'shortPosition' | 'segment' | 'straightLine' | 'rayLine' | 'horizontalStraightLine' | 'verticalStraightLine' | 'priceLine' | 'priceChannelLine' | 'fibonacciLine' | 'rect' | 'simpleAnnotation' | 'simpleTag';
 
 export interface IndicatorChoice { name: string; params?: number[]; pane: 'main' | 'sub' }
 
@@ -33,7 +36,9 @@ export const INDICATORS: Array<IndicatorChoice & { label: string }> = [
 export type Scale = 'normal' | 'log' | 'percentage';
 
 export interface ChartHandle {
-    setTool: (tool: DrawTool) => void;
+    setTool: (tool: DrawTool, data?: Partial<PositionToolData>) => void;
+    /** Remove the position tool's drawing (after the order is placed or cancelled). */
+    clearPositionTool: () => void;
     /** Zoom so roughly `n` bars fill the pane, latest bar at the right. */
     fitBars: (n: number) => void;
     lockDrawings: (locked: boolean) => void;
@@ -52,6 +57,10 @@ interface Props {
     positions: Position[];
     showPositions: boolean;
     scale: Scale;
+    /** The Long/Short tool changed (drawn, dragged) or was removed. */
+    onPositionDraft?: (draft: PositionDraft | null) => void;
+    /** A stop or target line on an open position was dragged to a new price. */
+    onLevelDrag?: (positionId: string, level: 'stopLoss' | 'takeProfit', price: number) => void;
     onCrosshair?: (bar: KLineData | null) => void;
     onStatus?: (s: { loading: boolean; error: string | null; bars: number }) => void;
 }
@@ -89,9 +98,9 @@ const STYLES = {
 } as const;
 
 /** A line at a price with a right-side label: entry, stop or target. */
-function positionLine(id: string, price: number, text: string, color: string, dashed = false) {
+function positionLine(id: string, price: number, text: string, color: string, dashed = false, draggable = false) {
     return {
-        id, name: 'priceLine', lock: true, groupId: 'positions',
+        id, name: 'priceLine', lock: !draggable, groupId: 'positions',
         points: [{ value: price }],
         extendData: text,
         styles: {
@@ -102,7 +111,7 @@ function positionLine(id: string, price: number, text: string, color: string, da
 }
 
 export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView(
-    { symbol, timeframe, chartType, indicators, positions, showPositions, scale, onCrosshair, onStatus }, ref,
+    { symbol, timeframe, chartType, indicators, positions, showPositions, scale, onPositionDraft, onLevelDrag, onCrosshair, onStatus }, ref,
 ) {
     const host = useRef<HTMLDivElement>(null);
     const chart = useRef<KChart | null>(null);
@@ -231,15 +240,43 @@ export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView
             const color = p.side === 'BUY' ? '#089981' : '#f23645';
             const tag = `${p.side} ${p.volume} @ ${fmtPrice(symbol, p.entryPrice)}${p.status === 'PENDING' ? ' (pending)' : ''}`;
             c.createOverlay(positionLine(`pos-${p.id}`, p.entryPrice, tag, color, p.status === 'PENDING'));
-            if (p.stopLoss) c.createOverlay(positionLine(`sl-${p.id}`, p.stopLoss, `SL ${fmtPrice(symbol, p.stopLoss)}`, '#f23645', true));
-            if (p.takeProfit) c.createOverlay(positionLine(`tp-${p.id}`, p.takeProfit, `TP ${fmtPrice(symbol, p.takeProfit)}`, '#089981', true));
+            // Stops and targets drag: the label follows the hand, the
+            // server hears about it on release.
+            const level = (kind: 'stopLoss' | 'takeProfit', price: number, prefix: string, lineColor: string) => ({
+                ...positionLine(`${kind === 'stopLoss' ? 'sl' : 'tp'}-${p.id}`, price, `${prefix} ${fmtPrice(symbol, price)}`, lineColor, true, p.status === 'OPEN'),
+                onPressedMoving: (e: any) => {
+                    const v = e.overlay?.points?.[0]?.value;
+                    if (v != null) c.overrideOverlay({ id: e.overlay.id, extendData: `${prefix} ${fmtPrice(symbol, v)} · release to apply` } as any);
+                    // false: let the library move the point; true would mean "handled" and freeze it.
+                    return false;
+                },
+                onPressedMoveEnd: (e: any) => {
+                    const v = e.overlay?.points?.[0]?.value;
+                    if (v != null && Math.abs(v - price) > 0) onLevelDrag?.(p.id, kind, v);
+                    return true;
+                },
+            });
+            if (p.stopLoss) c.createOverlay(level('stopLoss', p.stopLoss, 'SL', '#f23645') as any);
+            if (p.takeProfit) c.createOverlay(level('takeProfit', p.takeProfit, 'TP', '#089981') as any);
         }
-    }, [positions, symbol, showPositions, status.bars]);
+    }, [positions, symbol, showPositions, status.bars, onLevelDrag]);
 
     useImperativeHandle(ref, () => ({
-        setTool(tool) {
+        setTool(tool, data) {
             const c = chart.current;
             if (!c || tool === 'cursor') return;
+            if (tool === 'longPosition' || tool === 'shortPosition') {
+                c.removeOverlay({ groupId: 'positionTool' } as any);
+                const extendData: PositionToolData = { side: tool === 'longPosition' ? 'BUY' : 'SELL', symbol, volume: data?.volume ?? 0.1 };
+                const report = (e: any) => { onPositionDraft?.(draftFromPoints(e.overlay?.points ?? [], extendData)); return true; };
+                c.createOverlay({
+                    id: 'position-tool', name: 'longShortPosition', groupId: 'positionTool', extendData,
+                    styles: { point: { color: '#2962ff', borderColor: 'rgba(41,98,255,0.35)', radius: 5, activeRadius: 6 } },
+                    onDrawing: report, onDrawEnd: report, onPressedMoveEnd: report,
+                    onRemoved: () => { onPositionDraft?.(null); return true; },
+                } as any);
+                return;
+            }
             const id = `draw-${Date.now()}`;
             c.createOverlay({
                 id, name: tool, groupId: 'drawings',
@@ -256,6 +293,7 @@ export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView
         },
         lockDrawings(locked) { chart.current?.overrideOverlay({ groupId: 'drawings', lock: locked } as any); },
         hideDrawings(hidden) { chart.current?.overrideOverlay({ groupId: 'drawings', visible: !hidden } as any); },
+        clearPositionTool() { chart.current?.removeOverlay({ groupId: 'positionTool' } as any); },
         clearDrawings() {
             chart.current?.removeOverlay({ groupId: 'drawings' } as any);
             drawings.current = [];
@@ -270,7 +308,7 @@ export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView
         resetView() {
             chart.current?.scrollToRealTime();
         },
-    }), []);
+    }), [symbol, onPositionDraft]);
 
     return (
         <>

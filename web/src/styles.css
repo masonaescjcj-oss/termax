@@ -460,3 +460,9 @@ select.box option, .toolbar-row select option { background: var(--panel-2); }
     .hsearch { display: none; }
     .rightp { display: none; }
 }
+
+/* Position-tool draft card */
+.draft-card { position: absolute; left: 10px; top: 64px; z-index: 7; width: 300px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); font-size: 12px; }
+.draft-card .kv-list div { padding: 5px 0; }
+.draft-card input.vol { width: 52px; height: 22px; border: 1px solid var(--line); border-radius: 4px; background: transparent; padding: 0 6px; text-align: right; font-variant-numeric: tabular-nums; }
+.btn.ghost.active { background: var(--panel-3); color: var(--text-strong); }

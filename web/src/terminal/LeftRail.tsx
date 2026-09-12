@@ -4,6 +4,8 @@ import type { DrawTool } from './Chart';
 
 const TOOLS: Array<{ id: DrawTool; label: string; icon: () => React.JSX.Element }> = [
     { id: 'cursor', label: 'Cross (Esc)', icon: Ic.cursor },
+    { id: 'longPosition', label: 'Long position — click entry, target, stop', icon: Ic.longTool },
+    { id: 'shortPosition', label: 'Short position — click entry, target, stop', icon: Ic.shortTool },
     { id: 'segment', label: 'Trend line', icon: Ic.trend },
     { id: 'rayLine', label: 'Ray', icon: Ic.ray },
     { id: 'straightLine', label: 'Extended line', icon: Ic.line },
@@ -25,7 +27,7 @@ export function LeftRail({ tool, onTool, onUndo, onClear, locked, hidden, onLock
         <aside className="rail" aria-label="Drawing tools">
             {TOOLS.map((t, i) => (
                 <React.Fragment key={t.id}>
-                    {i === 1 && <span className="rail-sep" />}
+                    {(i === 1 || i === 3) && <span className="rail-sep" />}
                     <button className={`rail-btn ${tool === t.id ? 'active' : ''}`} title={t.label} onClick={() => onTool(t.id)}><t.icon /></button>
                 </React.Fragment>
             ))}

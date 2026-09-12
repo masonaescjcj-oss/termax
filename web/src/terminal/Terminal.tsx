@@ -5,6 +5,10 @@
  * watchlist persists on the account.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '../api';
+import { refreshAllBooks, usePositions } from './account';
+import type { PositionDraft } from './positionTool';
+import { setTicketDraft } from './ticketDraft';
 import type { KLineData } from 'klinecharts';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { accountIdOf, primaryAccount, useAuth } from '../auth';
@@ -13,8 +17,7 @@ import { Ic } from '../components/icons';
 import { useStored, useToast } from '../components/ui';
 import { changePct, useDayOpen } from '../daychange';
 import { useQuote, type Timeframe } from '../market';
-import { DEFAULT_WATCHLIST, fmtPrice, infoOf } from '../symbols';
-import { usePositions } from './account';
+import { DEFAULT_WATCHLIST, digitsFor, fmtPrice, infoOf } from '../symbols';
 import { AlertsPanel } from './AlertsPanel';
 import { BottomPanel } from './BottomPanel';
 import { CalendarPanel } from './CalendarPanel';
@@ -63,6 +66,8 @@ export function Terminal() {
     const [hover, setHover] = useState<KLineData | null>(null);
     const [bars, setBars] = useState(0);
     const [alertPrefill, setAlertPrefill] = useState(0);
+    const [draft, setDraft] = useState<PositionDraft | null>(null);
+    const [toolVolume, setToolVolume] = useStored('tx.toolvol', 0.1);
     const chart = useRef<ChartHandle>(null);
     const quote = useQuote(symbol);
     const dayOpen = useDayOpen(symbol);
@@ -119,7 +124,7 @@ export function Terminal() {
 
     const onTool = (t: DrawTool) => {
         setTool(t);
-        chart.current?.setTool(t);
+        chart.current?.setTool(t, { volume: toolVolume });
         // Drawing tools are one-shot: once the shape is placed the rail
         // returns to the cursor, like every charting terminal.
         if (t !== 'cursor') setTimeout(() => setTool('cursor'), 0);
@@ -141,6 +146,32 @@ export function Terminal() {
         setTimeframe(tf);
         // The new series arrives asynchronously; fit once it has drawn.
         setTimeout(() => chart.current?.fitBars(n), 900);
+    };
+
+    const onPositionDraft = useCallback((d: PositionDraft | null) => setDraft(d), []);
+    useEffect(() => { setDraft(null); chart.current?.clearPositionTool(); }, [symbol]);
+
+    const onLevelDrag = useCallback(async (positionId: string, level: 'stopLoss' | 'takeProfit', price: number) => {
+        const p = book.positions.find(x => x.id === positionId);
+        if (!p) return;
+        // The hand lands between ticks; the order carries a price the instrument can quote.
+        price = Number(price.toFixed(digitsFor(p.symbol, price)));
+        try {
+            await api('/trade/modify', { method: 'POST', body: { positionId, accountId, stopLoss: level === 'stopLoss' ? price : p.stopLoss, takeProfit: level === 'takeProfit' ? price : p.takeProfit, trailingStopDistance: p.trailingStopDistance || 0 } });
+            toast(`${level === 'stopLoss' ? 'Stop loss' : 'Take profit'} moved to ${fmtPrice(p.symbol, price)}`, 'ok');
+        } catch (e: any) {
+            toast(e.message, 'err');
+        } finally {
+            refreshAllBooks();
+        }
+    }, [book.positions, accountId, toast]);
+
+    const placeFromDraft = () => {
+        if (!draft) return;
+        const atMarket = quote ? Math.abs(draft.entry - quote.price) / quote.price < 0.0005 : true;
+        const kind = atMarket ? 'MARKET' : (draft.side === 'BUY' ? (draft.entry < (quote?.price ?? draft.entry) ? 'LIMIT' : 'STOP') : (draft.entry > (quote?.price ?? draft.entry) ? 'LIMIT' : 'STOP'));
+        setTicketDraft({ side: draft.side, kind, entry: draft.entry, stopLoss: draft.stop, takeProfit: draft.target, volume: draft.volume });
+        openRight('trade');
     };
 
     const onStatus = useCallback((s: { loading: boolean; error: string | null; bars: number }) => { setBars(s.bars); }, []);
@@ -192,8 +223,32 @@ export function Terminal() {
                 </div>
                 <div className="chart-host">
                     <ChartView ref={chart} symbol={symbol} timeframe={timeframe} chartType={chartType} indicators={indicators} scale={scale}
-                        positions={book.positions} showPositions={showPositions} onCrosshair={onCrosshair} onStatus={onStatus} />
+                        positions={book.positions} showPositions={showPositions} onCrosshair={onCrosshair} onStatus={onStatus}
+                        onPositionDraft={onPositionDraft} onLevelDrag={onLevelDrag} />
                 </div>
+                {draft && (
+                    <div className="draft-card">
+                        <div className="row" style={{ justifyContent: 'space-between' }}>
+                            <b className={draft.side === 'BUY' ? 'up' : 'down'}>{draft.side === 'BUY' ? 'Long' : 'Short'} {symbol}</b>
+                            <button className="x" onClick={() => { chart.current?.clearPositionTool(); setDraft(null); }} aria-label="Remove">×</button>
+                        </div>
+                        <div className="kv-list" style={{ padding: 0 }}>
+                            <div><span>Entry</span><b>{fmtPrice(symbol, draft.entry)}</b></div>
+                            <div><span>Target</span><b className="up">{draft.target == null ? 'click to set' : `${fmtPrice(symbol, draft.target)}  (+$${draft.reward?.toFixed(2)})`}</b></div>
+                            <div><span>Stop</span><b className="down">{draft.stop == null ? 'click to set' : `${fmtPrice(symbol, draft.stop)}  (−$${draft.risk?.toFixed(2)})`}</b></div>
+                            <div><span>Reward : risk</span><b>{draft.rr == null ? '—' : `${draft.rr.toFixed(2)} : 1`}</b></div>
+                            <div><span>Volume</span><b className="row" style={{ gap: 4 }}>
+                                <button className="link-btn" onClick={() => { const v = Math.max(0.01, +(toolVolume - 0.05).toFixed(2)); setToolVolume(v); chart.current?.setTool(tool === 'cursor' ? 'cursor' : tool); }} title="Less">−</button>
+                                <input className="vol" value={toolVolume} onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v > 0) setToolVolume(v); }} />
+                                <span className="muted small">lots · redraw to apply</span>
+                            </b></div>
+                        </div>
+                        <div className="muted small" style={{ margin: '6px 0 8px' }}>Drag any handle to adjust. Money figures are estimates in the quote currency.</div>
+                        <button className={`btn block ${draft.side === 'BUY' ? 'buy' : 'sell'}`} disabled={draft.stop == null} onClick={placeFromDraft}>
+                            {draft.stop == null ? 'Set the stop to continue' : `${draft.side === 'BUY' ? 'Buy' : 'Sell'} ${draft.volume} with this stop and target`}
+                        </button>
+                    </div>
+                )}
                 <ChartFooter scale={scale} onScale={setScale} onRange={onRange} onAuto={() => { setScale('normal'); chart.current?.resetView(); }} timeframe={timeframe} />
             </section>
             {showBottom && (

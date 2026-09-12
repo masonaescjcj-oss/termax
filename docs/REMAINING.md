@@ -233,3 +233,15 @@ Not yet:
 - Mobile push registration (`expo-notifications` + `POST /notifications/push-token`); the server side is ready.
 - Mobile inbox screen for `GET /notifications`.
 - Alert on indicator conditions (RSI crossing, EMA touch) rather than price only.
+
+## Trading from the chart
+
+Shipped: the Long/Short Position tool (entry → target → stop by three
+clicks, draggable handles, reward:risk and money at stake on the box, one
+click hands the order to the ticket as market/limit/stop with the levels
+filled in); stop and target lines of open positions drag and call
+`/trade/modify` on release; the Close dialog takes a partial volume with
+25/50/75/100% shortcuts (the server splits the position).
+
+Not yet: dragging the entry of a pending order; money figures on the tool
+are in the quote currency (no FX conversion for JPY/CHF crosses).

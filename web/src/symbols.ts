@@ -92,3 +92,16 @@ export function badgeOf(symbol: string): string {
     if (symbol.includes('/')) return symbol.split('/')[0].slice(0, 3);
     return symbol.slice(0, 3);
 }
+
+/** Units per 1.00 lot, mirroring the server's instrument table closely enough for on-chart estimates. */
+export function contractSizeOf(symbol: string): number {
+    const info = infoOf(symbol);
+    if (info.cls === 'Forex') return 100_000;
+    if (symbol === 'GOLD') return 100;
+    if (symbol === 'SILVER') return 5000;
+    if (symbol === 'USOIL') return 1000;
+    if (symbol === 'NG=F') return 10_000;
+    if (symbol === 'HG=F') return 25_000;
+    if (symbol === 'PL=F' || symbol === 'PA=F') return 100;
+    return 1;
+}

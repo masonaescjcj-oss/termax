@@ -10,6 +10,7 @@ import { Field, NumberInput, money, useToast } from '../components/ui';
 import { useQuote } from '../market';
 import { digitsFor, fmtPrice, infoOf } from '../symbols';
 import { refreshAllBooks, type AccountState } from './account';
+import { setTicketDraft, useTicketDraft } from './ticketDraft';
 
 type Side = 'BUY' | 'SELL';
 type Kind = 'MARKET' | 'LIMIT' | 'STOP';
@@ -35,6 +36,19 @@ export function OrderTicket({ symbol, accountId, account, defaultSide, compact }
 
     useEffect(() => { setTarget(''); setSl(''); setTp(''); setError(null); }, [symbol]);
     useEffect(() => { if (defaultSide) setSide(defaultSide); }, [defaultSide]);
+
+    // A draft from the chart's position tool fills the ticket once, then is consumed.
+    const draft = useTicketDraft();
+    useEffect(() => {
+        if (!draft) return;
+        const d = digitsFor(symbol, draft.entry ?? qt?.price);
+        setSide(draft.side); setKind(draft.kind);
+        if (draft.kind !== 'MARKET' && draft.entry != null) setTarget(draft.entry.toFixed(d));
+        setSl(draft.stopLoss == null ? '' : draft.stopLoss.toFixed(d));
+        setTp(draft.takeProfit == null ? '' : draft.takeProfit.toFixed(d));
+        if (draft.volume) setVolume(draft.volume.toFixed(2));
+        setTicketDraft(null);
+    }, [draft]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const vol = parseFloat(volume) || 0;
     const ref = kind === 'MARKET' ? (side === 'BUY' ? qt?.ask : qt?.bid) : parseFloat(target) || undefined;
