@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { executeOrder, getPositions, closePosition, modifyPosition, getAuth, authCallback, calculateLotSize, addAdvancedRule } from '../controllers/tradeController';
+import { executeOrder, getPositions, closePosition, modifyPosition, getAuth, authCallback, calculateLotSize, addAdvancedRule, getAccountHistory } from '../controllers/tradeController';
 import { verifyToken } from '../middleware/auth';
 
 const router = Router();
@@ -11,6 +11,7 @@ router.get('/auth', verifyToken, getAuth);
 // Authorisation comes from the signed single-use state parameter instead.
 router.get('/callback', authCallback);
 router.get('/positions', verifyToken, getPositions);
+router.get('/history', verifyToken, getAccountHistory);
 router.post('/execute', verifyToken, executeOrder);
 router.post('/close', verifyToken, closePosition);
 router.post('/modify', verifyToken, modifyPosition);

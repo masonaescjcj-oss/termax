@@ -294,3 +294,19 @@ own fake Supabase environment.
 Not yet: 2FA on the mobile app (the API is ready; the app still signs in
 with the password alone and will hit `MFA_REQUIRED`), recovery codes,
 trusted devices, and an admin view of which accounts have it on.
+
+## Account history and the equity curve
+
+Shipped: `account_snapshots` (migration 016) with one row per account per
+UTC day — balance, equity, margin, open positions, and that day's
+realised P/L and trade count. An hourly upsert writes today's row, so a
+missed midnight or a restart leaves no gap and costs two queries for the
+whole platform. `GET /trade/history` returns the curve with running peak
+and drawdown, the monthly table, and today marked live so the line ends
+now rather than at last midnight. Web: the Portfolio page opens with the
+equity curve, a drawdown strip beneath it on a shared x-axis (two
+measures, two plots — never two y-axes), a crosshair tooltip, range
+buttons, and monthly returns.
+
+Not yet: deposits and withdrawals are not separated from trading P/L (a
+top-up reads as growth); no per-bot equity curve; no CSV export.

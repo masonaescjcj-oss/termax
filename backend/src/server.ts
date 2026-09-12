@@ -12,6 +12,7 @@ import { initTradingEngine } from './controllers/tradeController';
 import { initBot } from './bot';
 import { alertEngine } from './services/alertEngine';
 import { screener } from './services/screener';
+import { snapshotAll } from './services/accountHistory';
 import { feedRouter } from './services/feeds';
 import { seedCampaigns } from './controllers/campaignController';
 import { initVenues } from './services/venues';
@@ -113,6 +114,15 @@ const startServer = async () => {
             };
             void loadAlerts();
             setInterval(loadAlerts, 5 * 60_000);
+
+            // Account history: an hourly upsert of today's row, so the
+            // equity curve survives a missed midnight and a restart costs
+            // nothing — the unique index makes every run a correction.
+            const snapshot = () => snapshotAll()
+                .then(n => { if (n) console.log(`📈 [History] ${n} account snapshot(s) written`); })
+                .catch((e: any) => console.log('Account history notice:', e.message));
+            setTimeout(snapshot, 90_000);
+            setInterval(snapshot, 60 * 60_000);
 
             // The screener table: first pass a minute after boot (the feeds
             // come first), then every ten minutes. Off with SCREENER=off.

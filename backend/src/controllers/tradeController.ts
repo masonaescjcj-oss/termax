@@ -20,6 +20,8 @@ import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import { emitPositionUpdate } from '../sockets/tradeSocket';
 import { notify } from '../services/notify';
+import { readHistory, realisedFor, withToday } from '../services/accountHistory';
+import { buildCurve, monthlyReturns, utcDay } from '../services/equityCurve';
 import { recordClosedTrade } from '../services/ai/statsRollup';
 import { evaluateRiskGuard, riskGuardConfig } from '../services/riskGuard';
 import { venueKindForAccount } from '../services/venues';
@@ -1813,5 +1815,52 @@ export const addAdvancedRule = async (req: AuthRequest, res: Response) => {
         }
     } catch (error: any) {
         res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+
+/**
+ * GET /trade/history — the account's daily equity, drawdown and monthly
+ * returns.
+ *
+ * The stored days come from the snapshot job; today is computed live so
+ * the curve ends now rather than at last midnight.
+ */
+export const getAccountHistory = async (req: AuthRequest, res: Response) => {
+    try {
+        const accountId = String(req.query.accountId || 'default_demo');
+        const days = Math.max(7, Math.min(1000, Number(req.query.days) || 180));
+
+        const stored = await readHistory(req.user!.id, accountId, days);
+
+        let rows = stored;
+        try {
+            const day = utcDay(Date.now());
+            const acct = await getAccountState(req.user!.id, accountId);
+            const r = await realisedFor(req.user!.id, accountId, day);
+            rows = withToday(stored, {
+                day,
+                balance: Number(acct.balance.toFixed(2)),
+                equity: Number(acct.equity.toFixed(2)),
+                realised: r.realised,
+                trades: r.trades,
+            });
+        } catch (e: any) {
+            // The stored history still stands without today's mark.
+            console.warn('[history] live day failed:', e.message);
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                accountId,
+                ...buildCurve(rows),
+                months: monthlyReturns(rows),
+                /** True until the job has written at least one past day. */
+                sparse: stored.length === 0,
+            },
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
     }
 };

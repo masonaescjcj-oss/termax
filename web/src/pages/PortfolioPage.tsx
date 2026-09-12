@@ -4,11 +4,15 @@
  */
 import { useState } from 'react';
 import { api, data } from '../api';
+import { accountIdOf, primaryAccount, useAuth } from '../auth';
+import { EquityCurve } from '../components/EquityCurve';
 import { Empty, Spinner, money, pct, pnlClass, signed, useLoader, useToast } from '../components/ui';
 
 const sevClass = (s: string) => (s === 'ALERT' || s === 'HIGH' ? 'red' : s === 'WARN' || s === 'MEDIUM' ? 'amber' : '');
 
 export function PortfolioPage() {
+    const { user } = useAuth();
+    const accountId = accountIdOf(primaryAccount(user));
     const port = useLoader<any>(() => data('/insights/portfolio'), [], { every: 30_000 });
     const dna = useLoader<any>(() => data('/insights/dna'), []);
     const digest = useLoader<any>(() => data('/insights/digest'), []);
@@ -17,7 +21,8 @@ export function PortfolioPage() {
 
     return (
         <div className="page"><div className="page-inner">
-            <div className="page-head"><div><h1>Portfolio &amp; risk</h1><p>What you are actually exposed to, and the habits your trades reveal.</p></div></div>
+            <div className="page-head"><div><h1>Portfolio &amp; risk</h1><p>What you are actually exposed to, how the account has grown, and the habits your trades reveal.</p></div></div>
+            <EquityCurve accountId={accountId} />
             {port.loading && !p ? <Spinner dark /> : !p ? <Empty title="Portfolio unavailable" text={port.error || undefined} /> : (
                 <>
                     <div className="stats">

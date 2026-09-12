@@ -220,7 +220,8 @@ a:hover { text-decoration: underline; }
 
 /* Tables */
 table.grid { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-table.grid th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); white-space: nowrap; }
+table.grid th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg); white-space: nowrap; }
+.panel-body table.grid th { position: sticky; top: 0; z-index: 1; }
 table.grid td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
 table.grid tr:hover td { background: var(--panel); }
 table.grid .r { text-align: right; }
@@ -506,3 +507,19 @@ select.box option, .toolbar-row select option { background: var(--panel-2); }
 .qr { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
 .qr svg, .qr img { width: 148px; height: 148px; display: block; }
 code.secret { display: inline-block; margin-top: 4px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; word-break: break-all; }
+
+/* Equity curve */
+.chart-wrap { position: relative; }
+.eq-svg { display: block; width: 100%; height: 190px; overflow: visible; }
+.eq-svg.dd { height: 74px; margin-top: 2px; }
+.eq-tick { fill: var(--muted); font-size: 10px; font-family: var(--font); }
+.eq-axis { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; padding: 2px 66px 0 8px; }
+.eq-tip { position: absolute; top: 4px; transform: translateX(-50%); max-width: 200px; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 10px; font-size: 11px; min-width: 168px; z-index: 3; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); }
+.eq-tip > b { display: block; color: var(--text-strong); margin-bottom: 4px; }
+.eq-tip div { display: flex; justify-content: space-between; gap: 14px; padding: 1px 0; }
+.eq-tip div span { color: var(--muted); }
+.eq-tip div b { font-variant-numeric: tabular-nums; }
+.mbar { display: flex; width: 100%; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.mbar i { display: block; height: 100%; }
+.mbar i.pos { margin-left: 50%; background: var(--green); }
+.mbar i.neg { margin-left: auto; margin-right: 50%; background: var(--red); }
