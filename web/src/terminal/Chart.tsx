@@ -72,7 +72,7 @@ interface Props {
 }
 
 const STYLES = {
-    grid: { horizontal: { color: 'rgba(255,255,255,0.05)' }, vertical: { color: 'rgba(255,255,255,0.05)' } },
+    grid: { horizontal: { color: 'rgba(255,255,255,0.04)' }, vertical: { color: 'rgba(255,255,255,0.04)' } },
     candle: {
         bar: { upColor: '#089981', downColor: '#f23645', noChangeColor: '#787b86', upBorderColor: '#089981', downBorderColor: '#f23645', upWickColor: '#089981', downWickColor: '#f23645' },
         area: { lineColor: '#2962ff', value: 'close', backgroundColor: [{ offset: 0, color: 'rgba(41,98,255,0.01)' }, { offset: 1, color: 'rgba(41,98,255,0.25)' }] },
@@ -86,12 +86,12 @@ const STYLES = {
         tooltip: { showRule: 'always', showName: true, showParams: true, text: { color: '#787b86', size: 11 } },
         lastValueMark: { show: false },
     },
-    xAxis: { axisLine: { color: '#2a2e39' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: '#2a2e39' } },
-    yAxis: { axisLine: { color: '#2a2e39' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: '#2a2e39' } },
-    separator: { color: '#2a2e39', activeBackgroundColor: 'rgba(41,98,255,0.12)' },
+    xAxis: { axisLine: { color: 'rgba(255,255,255,0.09)' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: 'rgba(255,255,255,0.09)' } },
+    yAxis: { axisLine: { color: 'rgba(255,255,255,0.09)' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: 'rgba(255,255,255,0.09)' } },
+    separator: { color: 'rgba(255,255,255,0.08)', activeBackgroundColor: 'rgba(41,98,255,0.12)' },
     crosshair: {
-        horizontal: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: '#363a45', color: '#f0f3fa', size: 11 } },
-        vertical: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: '#363a45', color: '#f0f3fa', size: 11 } },
+        horizontal: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: 'rgba(30,34,45,0.92)', color: '#f0f3fa', size: 11 } },
+        vertical: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: 'rgba(30,34,45,0.92)', color: '#f0f3fa', size: 11 } },
     },
     overlay: {
         point: { color: '#2962ff', borderColor: 'rgba(41,98,255,0.35)', activeColor: '#2962ff', activeBorderColor: 'rgba(41,98,255,0.35)' },
@@ -374,7 +374,7 @@ export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView
             if (id) chart.current?.removeOverlay({ id } as any);
         },
         screenshot() {
-            return chart.current?.getConvertPictureUrl(true, 'png', '#131722') ?? null;
+            return chart.current?.getConvertPictureUrl(true, 'png', '#000000') ?? null;
         },
         resetView() {
             chart.current?.scrollToRealTime();

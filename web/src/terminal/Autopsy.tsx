@@ -27,7 +27,7 @@ export function AutopsyDialog({ positionId, onClose }: { positionId: string; onC
 
     useEffect(() => {
         if (!r || !host.current) return;
-        const c = init(host.current, { styles: { grid: { horizontal: { color: 'rgba(255,255,255,0.05)' }, vertical: { color: 'rgba(255,255,255,0.05)' } }, candle: { bar: { upColor: '#089981', downColor: '#f23645', upBorderColor: '#089981', downBorderColor: '#f23645', upWickColor: '#089981', downWickColor: '#f23645' }, tooltip: { showRule: 'none' }, priceMark: { last: { show: false } } }, xAxis: { tickText: { color: '#787b86', size: 10 } }, yAxis: { tickText: { color: '#787b86', size: 10 } } } as any });
+        const c = init(host.current, { styles: { grid: { horizontal: { color: 'rgba(255,255,255,0.04)' }, vertical: { color: 'rgba(255,255,255,0.04)' } }, candle: { bar: { upColor: '#089981', downColor: '#f23645', upBorderColor: '#089981', downBorderColor: '#f23645', upWickColor: '#089981', downWickColor: '#f23645' }, tooltip: { showRule: 'none' }, priceMark: { last: { show: false } } }, xAxis: { axisLine: { color: 'rgba(255,255,255,0.09)' }, tickLine: { color: 'rgba(255,255,255,0.09)' }, tickText: { color: '#787b86', size: 10 } }, yAxis: { axisLine: { color: 'rgba(255,255,255,0.09)' }, tickLine: { color: 'rgba(255,255,255,0.09)' }, tickText: { color: '#787b86', size: 10 } } } as any });
         if (!c) return;
         c.applyNewData(r.candles.map(b => ({ timestamp: b.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume })));
         const t = r.trade;
