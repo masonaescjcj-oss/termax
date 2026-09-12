@@ -202,3 +202,19 @@ Two switches, both server-side, both off for launch:
 
 Forgot-password works without either switch: it sends Supabase's recovery
 email, and the web build turns the link into a set-a-new-password form.
+
+## Desktop web terminal (`web/`)
+
+Shipped: Vite + React terminal with the TradingView-style layout (toolbar,
+drawing rail, klinecharts centre, right panel with Watchlist / Trade /
+Details / MaxAI, bottom Positions / Orders / History with the account strip)
+plus Markets, Bots, Backtests, Journal, Portfolio & risk, Library, MaxAI and
+Settings pages, and the same sign-in gate as the app. Live quotes come over
+the existing socket; every page reads existing endpoints.
+
+Not yet:
+- Saved chart layouts / drawings on the account (drawings live in the page only).
+- Multi-chart grid (2×2) and chart-to-chart symbol sync.
+- Alerts (price crossing a level → notification).
+- Light theme.
+- Deployment: a Vercel project with root directory `web` and `VITE_API_URL`.

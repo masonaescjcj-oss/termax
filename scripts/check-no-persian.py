@@ -20,7 +20,7 @@ PERSIAN = re.compile(r'[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]')
 # `backend/src` match nothing at all — so it scanned zero files and printed
 # a pass. A gate that cannot fail is not a gate.
 REPO = Path(__file__).resolve().parent.parent
-ROOTS = [REPO / 'mobile' / 'src', REPO / 'backend' / 'src', REPO / 'admin' / 'src']
+ROOTS = [REPO / 'mobile' / 'src', REPO / 'backend' / 'src', REPO / 'admin' / 'src', REPO / 'web' / 'src']
 SUFFIXES = {'.ts', '.tsx', '.js', '.jsx'}
 
 # Individual files outside those roots that also carry text a user reads.

@@ -1,0 +1,51 @@
+/** Inline stroke icons: consistent 24-unit grid, styled by the parent's colour. */
+import React from 'react';
+
+const I = ({ children, ...rest }: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...rest}>{children}</svg>
+);
+
+export const Ic = {
+    search: () => <I><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></I>,
+    candles: () => <I><path d="M7 4v3M7 17v3M7 7h-2v10h4V7H7zM17 3v4M17 15v6M17 7h-2v8h4V7h-2z" /></I>,
+    line: () => <I><path d="M3 17l5-6 4 3 5-8 4 5" /></I>,
+    area: () => <I><path d="M3 17l5-6 4 3 5-8 4 5v9H3z" /></I>,
+    bars: () => <I><path d="M6 6v12M6 10h3M6 14H3M12 4v14M12 8h3M12 12H9M18 8v12M18 12h3M18 16h-3" /></I>,
+    fx: () => <I><path d="M4 18c3-8 6-8 8-4s5 4 8-4" /><path d="M4 6h16" /></I>,
+    layout: () => <I><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M14 10v10" /></I>,
+    fullscreen: () => <I><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></I>,
+    camera: () => <I><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></I>,
+    cursor: () => <I><path d="M12 3v18M3 12h18" /></I>,
+    trend: () => <I><path d="M4 19 20 5" /><circle cx="4" cy="19" r="1.6" /><circle cx="20" cy="5" r="1.6" /></I>,
+    hline: () => <I><path d="M3 12h18" /><circle cx="12" cy="12" r="1.6" /></I>,
+    vline: () => <I><path d="M12 3v18" /><circle cx="12" cy="12" r="1.6" /></I>,
+    ray: () => <I><path d="M4 18 21 6" /><circle cx="4" cy="18" r="1.6" /></I>,
+    channel: () => <I><path d="M3 17 17 5M7 21 21 9" /></I>,
+    fib: () => <I><path d="M3 5h18M3 9h18M3 13h18M3 18h18" /></I>,
+    text: () => <I><path d="M5 6h14M12 6v13M9 19h6" /></I>,
+    tag: () => <I><path d="M4 4h8l8 8-8 8-8-8z" /><circle cx="8" cy="8" r="1.4" /></I>,
+    price: () => <I><path d="M3 12h13l3 0" /><rect x="16" y="9" width="5" height="6" rx="1" /></I>,
+    ruler: () => <I><path d="M3 17 17 3l4 4L7 21z" /><path d="m8 12 2 2M11 9l2 2M14 6l2 2" /></I>,
+    eraser: () => <I><path d="m4 15 9-9 6 6-6 6H8z" /><path d="M4 21h16" /></I>,
+    trash: () => <I><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></I>,
+    star: (p: { on?: boolean }) => <I fill={p.on ? 'currentColor' : 'none'}><path d="m12 3 2.8 5.8 6.2.9-4.5 4.4 1.1 6.3L12 17.4 6.4 20.4l1.1-6.3L3 9.7l6.2-.9z" /></I>,
+    plus: () => <I><path d="M12 5v14M5 12h14" /></I>,
+    close: () => <I><path d="M6 6l12 12M18 6 6 18" /></I>,
+    chevron: () => <I><path d="m6 9 6 6 6-6" /></I>,
+    bolt: () => <I><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></I>,
+    bot: () => <I><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4M8 14h.01M16 14h.01M9 18h6" /></I>,
+    send: () => <I><path d="M4 12 20 4l-4 16-4-7z" /></I>,
+    grid: () => <I><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></I>,
+    panel: () => <I><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 14h18" /></I>,
+    sidebar: () => <I><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></I>,
+    magnet: () => <I><path d="M6 4v8a6 6 0 0 0 12 0V4M6 4h4v8a2 2 0 0 0 4 0V4h4" /></I>,
+    undo: () => <I><path d="M9 14 4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-3" /></I>,
+    lock: () => <I><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></I>,
+    eye: () => <I><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></I>,
+    bell: () => <I><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z" /><path d="M10 21h4" /></I>,
+    calendar: () => <I><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></I>,
+    list: () => <I><path d="M8 6h13M8 12h13M8 18h13" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></I>,
+    info: () => <I><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></I>,
+    sparkle: () => <I><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" /><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" /></I>,
+    settings: () => <I><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></I>,
+};

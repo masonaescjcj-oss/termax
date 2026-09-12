@@ -1,0 +1,282 @@
+/**
+ * The price chart. klinecharts draws; this component feeds it history from
+ * `/market/candles`, rolls live ticks into the last bar, applies the chosen
+ * indicators and chart type, and paints the trader's open positions as
+ * price lines so entries, stops and targets sit on the chart they belong to.
+ */
+import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { dispose, init, type Chart as KChart, type KLineData } from 'klinecharts';
+import { fetchCandles, TF_MS, watch, type Quote, type Timeframe } from '../market';
+import { digitsFor, fmtPrice } from '../symbols';
+import type { Position } from './account';
+
+export type ChartType = 'candle_solid' | 'candle_stroke' | 'ohlc' | 'area' | 'line';
+export type DrawTool = 'cursor' | 'segment' | 'straightLine' | 'rayLine' | 'horizontalStraightLine' | 'verticalStraightLine' | 'priceLine' | 'priceChannelLine' | 'fibonacciLine' | 'rect' | 'simpleAnnotation' | 'simpleTag';
+
+export interface IndicatorChoice { name: string; params?: number[]; pane: 'main' | 'sub' }
+
+export const INDICATORS: Array<IndicatorChoice & { label: string }> = [
+    { name: 'MA', label: 'Moving Average (5, 10, 30, 60)', params: [5, 10, 30, 60], pane: 'main' },
+    { name: 'EMA', label: 'Exponential MA (12, 26, 50)', params: [12, 26, 50], pane: 'main' },
+    { name: 'BOLL', label: 'Bollinger Bands', params: [20, 2], pane: 'main' },
+    { name: 'SAR', label: 'Parabolic SAR', pane: 'main' },
+    { name: 'VOL', label: 'Volume', pane: 'sub' },
+    { name: 'MACD', label: 'MACD', params: [12, 26, 9], pane: 'sub' },
+    { name: 'RSI', label: 'RSI (14)', params: [14], pane: 'sub' },
+    { name: 'KDJ', label: 'Stochastic (KDJ)', params: [9, 3, 3], pane: 'sub' },
+    { name: 'CCI', label: 'CCI (20)', params: [20], pane: 'sub' },
+    { name: 'DMI', label: 'DMI / ADX', params: [14, 6], pane: 'sub' },
+    { name: 'OBV', label: 'On-Balance Volume', pane: 'sub' },
+    { name: 'WR', label: 'Williams %R', params: [14], pane: 'sub' },
+];
+
+export type Scale = 'normal' | 'log' | 'percentage';
+
+export interface ChartHandle {
+    setTool: (tool: DrawTool) => void;
+    /** Zoom so roughly `n` bars fill the pane, latest bar at the right. */
+    fitBars: (n: number) => void;
+    lockDrawings: (locked: boolean) => void;
+    hideDrawings: (hidden: boolean) => void;
+    clearDrawings: () => void;
+    removeLastDrawing: () => void;
+    screenshot: () => string | null;
+    resetView: () => void;
+}
+
+interface Props {
+    symbol: string;
+    timeframe: Timeframe;
+    chartType: ChartType;
+    indicators: string[];
+    positions: Position[];
+    showPositions: boolean;
+    scale: Scale;
+    onCrosshair?: (bar: KLineData | null) => void;
+    onStatus?: (s: { loading: boolean; error: string | null; bars: number }) => void;
+}
+
+const STYLES = {
+    grid: { horizontal: { color: 'rgba(255,255,255,0.05)' }, vertical: { color: 'rgba(255,255,255,0.05)' } },
+    candle: {
+        bar: { upColor: '#089981', downColor: '#f23645', noChangeColor: '#787b86', upBorderColor: '#089981', downBorderColor: '#f23645', upWickColor: '#089981', downWickColor: '#f23645' },
+        area: { lineColor: '#2962ff', value: 'close', backgroundColor: [{ offset: 0, color: 'rgba(41,98,255,0.01)' }, { offset: 1, color: 'rgba(41,98,255,0.25)' }] },
+        priceMark: {
+            high: { color: '#787b86' }, low: { color: '#787b86' },
+            last: { upColor: '#089981', downColor: '#f23645', noChangeColor: '#787b86', line: { style: 'dashed', dashedValue: [3, 3] } },
+        },
+        tooltip: { showRule: 'none' },
+    },
+    indicator: {
+        tooltip: { showRule: 'always', showName: true, showParams: true, text: { color: '#787b86', size: 11 } },
+        lastValueMark: { show: false },
+    },
+    xAxis: { axisLine: { color: '#2a2e39' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: '#2a2e39' } },
+    yAxis: { axisLine: { color: '#2a2e39' }, tickText: { color: '#787b86', size: 11 }, tickLine: { color: '#2a2e39' } },
+    separator: { color: '#2a2e39', activeBackgroundColor: 'rgba(41,98,255,0.12)' },
+    crosshair: {
+        horizontal: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: '#363a45', color: '#f0f3fa', size: 11 } },
+        vertical: { line: { color: '#787b86', style: 'dashed', dashedValue: [4, 2] }, text: { backgroundColor: '#363a45', color: '#f0f3fa', size: 11 } },
+    },
+    overlay: {
+        point: { color: '#2962ff', borderColor: 'rgba(41,98,255,0.35)', activeColor: '#2962ff', activeBorderColor: 'rgba(41,98,255,0.35)' },
+        line: { color: '#2962ff', size: 1 },
+        rect: { color: 'rgba(41,98,255,0.15)', borderColor: '#2962ff' },
+        polygon: { color: 'rgba(41,98,255,0.15)', borderColor: '#2962ff' },
+        text: { color: '#f0f3fa', backgroundColor: '#2962ff' },
+        rectText: { color: '#f0f3fa', backgroundColor: '#2962ff' },
+    },
+} as const;
+
+/** A line at a price with a right-side label: entry, stop or target. */
+function positionLine(id: string, price: number, text: string, color: string, dashed = false) {
+    return {
+        id, name: 'priceLine', lock: true, groupId: 'positions',
+        points: [{ value: price }],
+        extendData: text,
+        styles: {
+            line: { color, size: 1, style: dashed ? 'dashed' : 'solid', dashedValue: [4, 4] },
+            text: { color: '#fff', backgroundColor: color, size: 10, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 2 },
+        },
+    } as any;
+}
+
+export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView(
+    { symbol, timeframe, chartType, indicators, positions, showPositions, scale, onCrosshair, onStatus }, ref,
+) {
+    const host = useRef<HTMLDivElement>(null);
+    const chart = useRef<KChart | null>(null);
+    const subPanes = useRef<Map<string, string>>(new Map());
+    const mainInds = useRef<Set<string>>(new Set());
+    const drawings = useRef<string[]>([]);
+    const [status, setStatus] = useState<{ loading: boolean; error: string | null; bars: number }>({ loading: true, error: null, bars: 0 });
+    const lastBar = useRef<KLineData | null>(null);
+    const seriesKey = `${symbol}|${timeframe}`;
+    const seriesRef = useRef(seriesKey);
+    seriesRef.current = seriesKey;
+
+    useEffect(() => { onStatus?.(status); }, [status, onStatus]);
+
+    // Mount once.
+    useEffect(() => {
+        if (!host.current) return;
+        const c = init(host.current, {
+            styles: STYLES as any,
+            locale: 'en-US',
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        });
+        if (!c) return;
+        chart.current = c;
+        c.setOffsetRightDistance(80);
+        c.subscribeAction('onCrosshairChange' as any, (p: any) => {
+            onCrosshair?.(p?.kLineData ?? null);
+        });
+        const ro = new ResizeObserver(() => c.resize());
+        ro.observe(host.current);
+        return () => {
+            ro.disconnect();
+            if (host.current) dispose(host.current);
+            chart.current = null;
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // History + live ticks for the current series.
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        let alive = true;
+        setStatus({ loading: true, error: null, bars: 0 });
+        c.clearData();
+        lastBar.current = null;
+        c.setPriceVolumePrecision(digitsFor(symbol), 0);
+
+        fetchCandles(symbol, timeframe, 500).then(rows => {
+            if (!alive || seriesRef.current !== seriesKey) return;
+            const list: KLineData[] = rows.map(r => ({ timestamp: r.timestamp, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume }));
+            c.applyNewData(list, false);
+            lastBar.current = list[list.length - 1] ?? null;
+            setStatus({ loading: false, error: list.length ? null : 'No history for this symbol yet.', bars: list.length });
+        }).catch(e => {
+            if (alive && seriesRef.current === seriesKey) setStatus({ loading: false, error: e?.message || 'Could not load candles.', bars: 0 });
+        });
+
+        const step = TF_MS[timeframe];
+        const off = watch(symbol, (qt: Quote) => {
+            if (!alive || seriesRef.current !== seriesKey) return;
+            const last = lastBar.current;
+            if (!last) return;
+            const bucket = Math.floor(qt.ts / step) * step;
+            const price = qt.price;
+            if (bucket > last.timestamp) {
+                // The tick opened a new bar; the one we had is closed.
+                const bar: KLineData = { timestamp: bucket, open: price, high: price, low: price, close: price, volume: 0 };
+                lastBar.current = bar;
+                c.updateData(bar);
+            } else {
+                const bar: KLineData = { ...last, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price };
+                lastBar.current = bar;
+                c.updateData(bar);
+            }
+        });
+        return () => { alive = false; off(); };
+    }, [seriesKey, symbol, timeframe]);
+
+    // Chart type.
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        if (chartType === 'line') {
+            c.setStyles({ candle: { type: 'area', area: { lineColor: '#2962ff', backgroundColor: [{ offset: 0, color: 'rgba(0,0,0,0)' }, { offset: 1, color: 'rgba(0,0,0,0)' }] } } } as any);
+        } else if (chartType === 'area') {
+            c.setStyles({ candle: { type: 'area', area: STYLES.candle.area } } as any);
+        } else {
+            c.setStyles({ candle: { type: chartType } } as any);
+        }
+    }, [chartType]);
+
+    useEffect(() => { chart.current?.setStyles({ yAxis: { type: scale } } as any); }, [scale]);
+
+    // Indicators: main-pane ones stack on the candles; sub-pane ones get a pane each.
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        const want = new Set(indicators);
+        for (const name of [...mainInds.current]) {
+            if (!want.has(name)) { c.removeIndicator('candle_pane', name); mainInds.current.delete(name); }
+        }
+        for (const [name, paneId] of [...subPanes.current]) {
+            if (!want.has(name)) { c.removeIndicator(paneId, name); subPanes.current.delete(name); }
+        }
+        for (const name of indicators) {
+            const def = INDICATORS.find(i => i.name === name);
+            if (!def) continue;
+            const create = { name, calcParams: def.params } as any;
+            if (def.pane === 'main') {
+                if (!mainInds.current.has(name)) { c.createIndicator(create, true, { id: 'candle_pane' }); mainInds.current.add(name); }
+            } else if (!subPanes.current.has(name)) {
+                const paneId = c.createIndicator(create, false, { height: 90, minHeight: 60 });
+                if (paneId) subPanes.current.set(name, paneId);
+            }
+        }
+    }, [indicators]);
+
+    // Position lines.
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        c.removeOverlay({ groupId: 'positions' } as any);
+        if (!showPositions) return;
+        for (const p of positions) {
+            if (p.symbol !== symbol || p.status === 'CLOSED') continue;
+            const color = p.side === 'BUY' ? '#089981' : '#f23645';
+            const tag = `${p.side} ${p.volume} @ ${fmtPrice(symbol, p.entryPrice)}${p.status === 'PENDING' ? ' (pending)' : ''}`;
+            c.createOverlay(positionLine(`pos-${p.id}`, p.entryPrice, tag, color, p.status === 'PENDING'));
+            if (p.stopLoss) c.createOverlay(positionLine(`sl-${p.id}`, p.stopLoss, `SL ${fmtPrice(symbol, p.stopLoss)}`, '#f23645', true));
+            if (p.takeProfit) c.createOverlay(positionLine(`tp-${p.id}`, p.takeProfit, `TP ${fmtPrice(symbol, p.takeProfit)}`, '#089981', true));
+        }
+    }, [positions, symbol, showPositions, status.bars]);
+
+    useImperativeHandle(ref, () => ({
+        setTool(tool) {
+            const c = chart.current;
+            if (!c || tool === 'cursor') return;
+            const id = `draw-${Date.now()}`;
+            c.createOverlay({
+                id, name: tool, groupId: 'drawings',
+                onDrawEnd: () => { drawings.current.push(id); return true; },
+                onRemoved: () => { drawings.current = drawings.current.filter(d => d !== id); return true; },
+            } as any);
+        },
+        fitBars(n) {
+            const c = chart.current;
+            if (!c || !host.current) return;
+            const width = host.current.clientWidth - 70;
+            c.setBarSpace(Math.max(1, Math.min(50, width / Math.max(10, n))));
+            c.scrollToRealTime();
+        },
+        lockDrawings(locked) { chart.current?.overrideOverlay({ groupId: 'drawings', lock: locked } as any); },
+        hideDrawings(hidden) { chart.current?.overrideOverlay({ groupId: 'drawings', visible: !hidden } as any); },
+        clearDrawings() {
+            chart.current?.removeOverlay({ groupId: 'drawings' } as any);
+            drawings.current = [];
+        },
+        removeLastDrawing() {
+            const id = drawings.current.pop();
+            if (id) chart.current?.removeOverlay({ id } as any);
+        },
+        screenshot() {
+            return chart.current?.getConvertPictureUrl(true, 'png', '#131722') ?? null;
+        },
+        resetView() {
+            chart.current?.scrollToRealTime();
+        },
+    }), []);
+
+    return (
+        <>
+            <div ref={host} className="kline" />
+            {status.loading && <div className="chart-empty"><span className="row"><span className="spinner dark" /> Loading {symbol}…</span></div>}
+            {!status.loading && status.error && <div className="chart-empty">{status.error}</div>}
+        </>
+    );
+});
