@@ -3,6 +3,7 @@
  * paper, read its report, and take it live once the gate says so.
  */
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, data } from '../api';
 import { accountIdOf, primaryAccount, useAuth } from '../auth';
 import { Empty, Modal, Spinner, money, pnlClass, signed, useLoader, useToast, when } from '../components/ui';
@@ -11,6 +12,7 @@ type Bot = { id: string; name: string; status: 'STOPPED' | 'FORWARD_TEST' | 'LIV
 
 export function BotsPage() {
     const toast = useToast();
+    const nav = useNavigate();
     const { user } = useAuth();
     const accountId = accountIdOf(primaryAccount(user));
     const bots = useLoader<Bot[]>(() => data('/bots'), [], { every: 30_000 });
@@ -55,6 +57,8 @@ export function BotsPage() {
                                     : <button className="btn ghost sm" disabled={busy === b.id} onClick={() => act(b, 'stop')}>Stop</button>}
                                 {b.status === 'FORWARD_TEST' && <button className="btn ghost sm" disabled={busy === b.id} onClick={() => act(b, 'go-live')}>Go live</button>}
                                 <button className="btn ghost sm" onClick={() => setReport(b.id)}>Report</button>
+                                <button className="btn ghost sm" onClick={() => nav(`/chart/${encodeURIComponent(b.spec?.symbol?.replace('/', '-') ?? 'BTC-USDT')}?bot=${b.id}`)}>On chart</button>
+                                <button className="btn ghost sm" onClick={() => nav(`/replay?symbol=${encodeURIComponent(b.spec?.symbol ?? 'BTC/USDT')}&tf=${b.spec?.timeframe ?? '15m'}&bot=${b.id}`)}>Replay</button>
                                 <span className="grow" />
                                 <button className="link-btn red" disabled={busy === b.id} onClick={() => act(b, 'delete')}>Delete</button>
                             </div>

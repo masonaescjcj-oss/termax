@@ -10,6 +10,7 @@ import { JournalPage } from './pages/JournalPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { MarketsPage } from './pages/MarketsPage';
 import { ScreenerPage } from './pages/ScreenerPage';
+import { ReplayPage } from './pages/ReplayPage';
 import { PortfolioPage } from './pages/PortfolioPage';
 import { AIPage } from './pages/AIPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -34,6 +35,7 @@ export default function App() {
                         <Route path="/chart/:symbol" element={<Gate><Terminal /></Gate>} />
                         <Route path="/markets" element={<Gate><MarketsPage /></Gate>} />
                         <Route path="/screener" element={<Gate><ScreenerPage /></Gate>} />
+                        <Route path="/replay" element={<Gate><ReplayPage /></Gate>} />
                         <Route path="/bots" element={<Gate><BotsPage /></Gate>} />
                         <Route path="/backtests" element={<Gate><BacktestsPage /></Gate>} />
                         <Route path="/journal" element={<Gate><JournalPage /></Gate>} />

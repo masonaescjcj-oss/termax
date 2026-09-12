@@ -478,3 +478,26 @@ select.box option, .toolbar-row select option { background: var(--panel-2); }
 .sent { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--red); overflow: hidden; }
 .sent i { display: block; height: 100%; background: var(--green); }
 .sent.big { display: block; width: 100%; height: 10px; border-radius: 5px; }
+
+/* Bot on chart banner */
+.bot-banner { position: absolute; left: 10px; bottom: calc(var(--footer-h) + 10px); z-index: 7; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-lg); font-size: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
+
+/* Replay */
+.replay { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.replay-top { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.replay-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 340px; }
+.replay-chart { position: relative; min-width: 0; }
+.replay-side { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; gap: 10px; padding-top: 10px; overflow: hidden; }
+.replay-hud { position: absolute; left: 10px; top: 8px; z-index: 5; font-size: 12px; pointer-events: none; }
+.score { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px; }
+.score > div { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.score b { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.replay-ctrls { display: flex; gap: 6px; padding: 0 12px; }
+.replay-ctrls .btn { flex: 1; }
+.replay-trade { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 0 12px; }
+.lesson { margin: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
+.lesson-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; text-align: left; font-size: 12px; color: var(--text-strong); font-weight: 600; }
+.lesson-body { padding: 0 12px 10px; font-size: 12px; }
+.lesson-line { display: flex; gap: 8px; padding: 2px 0; color: var(--text); }
+.lesson-line.group { color: var(--muted); }
+@media (max-width: 1000px) { .replay-body { grid-template-columns: 1fr 300px; } }

@@ -9,6 +9,7 @@ import { Empty, Field, Modal, NumberInput, money, pnlClass, signed, useToast, wh
 import { useQuotes } from '../market';
 import { digitsFor, fmtPrice } from '../symbols';
 import { markPnL, refreshAllBooks, type AccountState, type Position } from './account';
+import { AutopsyDialog } from './Autopsy';
 
 type Tab = 'positions' | 'orders' | 'history';
 
@@ -20,6 +21,7 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
     const [modify, setModify] = useState<Position | null>(null);
     const [closing, setClosing] = useState<string | null>(null);
     const [closeDlg, setCloseDlg] = useState<Position | null>(null);
+    const [autopsy, setAutopsy] = useState<string | null>(null);
 
     const open = useMemo(() => positions.filter(p => p.status === 'OPEN'), [positions]);
     const pending = useMemo(() => positions.filter(p => p.status === 'PENDING'), [positions]);
@@ -108,7 +110,7 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
                 ))}
                 {tab === 'history' && (closed.length === 0 ? <Empty title="No closed trades yet" /> : (
                     <table className="grid">
-                        <thead><tr><th>Symbol</th><th>Side</th><th className="r">Volume</th><th className="r">Entry</th><th className="r">Exit</th><th className="r">Commission</th><th className="r">Swap</th><th className="r">Net P/L</th><th>Opened</th><th>Closed</th></tr></thead>
+                        <thead><tr><th>Symbol</th><th>Side</th><th className="r">Volume</th><th className="r">Entry</th><th className="r">Exit</th><th className="r">Commission</th><th className="r">Swap</th><th className="r">Net P/L</th><th>Opened</th><th>Closed</th><th></th></tr></thead>
                         <tbody>
                             {closed.map(p => (
                                 <tr key={p.id}>
@@ -122,12 +124,14 @@ export function BottomPanel({ positions, account, accountId, loaded, error, onPi
                                     <td className={`r strong ${pnlClass(p.finalProfit)}`}>{signed(p.finalProfit)}</td>
                                     <td className="muted">{when(p.openTime)}</td>
                                     <td className="muted">{when(p.closeTime)}</td>
+                                    <td className="r"><button className="link-btn" onClick={() => setAutopsy(p.id)}>Autopsy</button></td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 ))}
             </div>
+            {autopsy && <AutopsyDialog positionId={autopsy} onClose={() => setAutopsy(null)} />}
             <div className="acct-strip">
                 <div><span>Balance</span><b>{money(account?.balance)}</b></div>
                 <div><span>Equity</span><b>{money(equity ?? account?.equity)}</b></div>

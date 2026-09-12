@@ -9,8 +9,12 @@ import { api } from '../api';
 import { refreshAllBooks, usePositions } from './account';
 import type { PositionDraft } from './positionTool';
 import { setTicketDraft } from './ticketDraft';
+import { listIndicators, toggleIndicator as toggleIndicatorApi, type CustomIndicator } from './customIndicators';
+import { IndicatorsManager } from './IndicatorsManager';
+import type { BotChartData } from './botOverlay';
+import { data } from '../api';
 import type { KLineData } from 'klinecharts';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { accountIdOf, primaryAccount, useAuth } from '../auth';
 import { Chat } from '../components/Chat';
 import { Ic } from '../components/icons';
@@ -67,6 +71,11 @@ export function Terminal() {
     const [bars, setBars] = useState(0);
     const [alertPrefill, setAlertPrefill] = useState(0);
     const [draft, setDraft] = useState<PositionDraft | null>(null);
+    const [customInds, setCustomInds] = useState<CustomIndicator[]>([]);
+    const [manage, setManage] = useState(false);
+    const [botChart, setBotChart] = useState<BotChartData | null>(null);
+    const [sp, setSp] = useSearchParams();
+    const botParam = sp.get('bot') || '';
     const [toolVolume, setToolVolume] = useStored('tx.toolvol', 0.1);
     const chart = useRef<ChartHandle>(null);
     const quote = useQuote(symbol);
@@ -78,6 +87,18 @@ export function Terminal() {
     const watchlist = user?.watchlist?.length ? user.watchlist : DEFAULT_WATCHLIST;
 
     useEffect(() => { setLastSymbol(symbol); }, [symbol, setLastSymbol]);
+    useEffect(() => { listIndicators().then(setCustomInds).catch(() => undefined); }, []);
+    useEffect(() => {
+        if (!botParam) { setBotChart(null); return; }
+        let alive = true;
+        data<BotChartData>(`/bots/${botParam}/chart`).then(d => { if (!alive) return; setBotChart(d); if (d.symbol !== symbol) nav(`/chart/${encodeURIComponent(d.symbol.replace('/', '-'))}?bot=${botParam}`, { replace: true }); }).catch(e => { toast(e.message, 'err'); });
+        return () => { alive = false; };
+    }, [botParam]); // eslint-disable-line react-hooks/exhaustive-deps
+    const toggleCustom = async (ind: CustomIndicator) => {
+        try { await toggleIndicatorApi(ind.id, !ind.enabled); setCustomInds(list => list.map(i => (i.id === ind.id ? { ...i, enabled: !i.enabled } : i))); }
+        catch (e: any) { toast(e.message, 'err'); }
+    };
+    const clearBot = () => { const next = new URLSearchParams(sp); next.delete('bot'); setSp(next, { replace: true }); };
     useEffect(() => { setHover(null); }, [symbol, timeframe]);
 
     // The header search and the alert engine talk to the terminal here.
@@ -193,6 +214,8 @@ export function Terminal() {
                 onTogglePositions={() => setShowPositions(v => !v)} onScreenshot={screenshot} onFullscreen={fullscreen}
                 onReset={() => chart.current?.resetView()} onOpenTicket={() => openRight('trade')}
                 onAlert={() => { setAlertPrefill(p => p + 1); openRight('alerts'); }}
+                customIndicators={customInds} onToggleCustom={toggleCustom} onManageIndicators={() => setManage(true)}
+                onReplay={() => nav(`/replay?symbol=${encodeURIComponent(symbol)}&tf=${timeframe}${botParam ? `&bot=${botParam}` : ''}`)}
             />
             <LeftRail tool={tool} onTool={onTool} onUndo={() => chart.current?.removeLastDrawing()} onClear={() => chart.current?.clearDrawings()}
                 locked={locked} hidden={hidden}
@@ -224,8 +247,18 @@ export function Terminal() {
                 <div className="chart-host">
                     <ChartView ref={chart} symbol={symbol} timeframe={timeframe} chartType={chartType} indicators={indicators} scale={scale}
                         positions={book.positions} showPositions={showPositions} onCrosshair={onCrosshair} onStatus={onStatus}
-                        onPositionDraft={onPositionDraft} onLevelDrag={onLevelDrag} />
+                        onPositionDraft={onPositionDraft} onLevelDrag={onLevelDrag}
+                        customIndicators={customInds.filter(i => i.enabled)} bot={botChart} />
                 </div>
+                {botChart && botChart.symbol === symbol && (
+                    <div className="bot-banner">
+                        <span className="chip blue">Bot</span>
+                        <b>{botChart.name}</b>
+                        <span className="muted">{botChart.trades.length} trades on this chart · net <b className={botChart.trades.reduce((s, t) => s + t.netProfit, 0) >= 0 ? 'up' : 'down'}>{(() => { const n = botChart.trades.reduce((s, t) => s + t.netProfit, 0); return `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(2)}`; })()}</b>{botChart.open ? ` · open ${botChart.open.side} ${botChart.open.volume}` : ''}</span>
+                        <button className="link-btn" onClick={() => nav(`/replay?symbol=${encodeURIComponent(symbol)}&tf=${botChart.timeframe}&bot=${botChart.botId}`)}>Replay against it</button>
+                        <button className="x" onClick={clearBot} aria-label="Hide bot">×</button>
+                    </div>
+                )}
                 {draft && (
                     <div className="draft-card">
                         <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -270,6 +303,7 @@ export function Terminal() {
                     <button key={t.id} className={`rail-btn ${showRight && rightTab === t.id ? 'active' : ''}`} title={t.label} onClick={() => clickRail(t.id)}><t.icon /></button>
                 ))}
             </aside>
+            {manage && <IndicatorsManager onClose={() => setManage(false)} onChanged={setCustomInds} />}
             {search && <SymbolSearch onPick={pick} onClose={() => setSearch(false)} watchlist={watchlist} onToggleWatch={toggleWatch} />}
         </div>
     );

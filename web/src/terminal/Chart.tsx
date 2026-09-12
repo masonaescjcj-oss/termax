@@ -10,6 +10,8 @@ import { fetchCandles, TF_MS, watch, type Quote, type Timeframe } from '../marke
 import { digitsFor, fmtPrice } from '../symbols';
 import type { Position } from './account';
 import { draftFromPoints, ensurePositionTool, type PositionDraft, type PositionToolData } from './positionTool';
+import { ensureTemplate, fetchIndicatorValues, setSeries, type CustomIndicator } from './customIndicators';
+import { drawBotTrades, mapSpecIndicator, type BotChartData } from './botOverlay';
 
 ensurePositionTool();
 
@@ -57,6 +59,10 @@ interface Props {
     positions: Position[];
     showPositions: boolean;
     scale: Scale;
+    /** Enabled custom indicators; values are fetched here per symbol/timeframe. */
+    customIndicators?: CustomIndicator[];
+    /** A bot whose trades, open position and spec indicators are painted on this chart. */
+    bot?: BotChartData | null;
     /** The Long/Short tool changed (drawn, dragged) or was removed. */
     onPositionDraft?: (draft: PositionDraft | null) => void;
     /** A stop or target line on an open position was dragged to a new price. */
@@ -111,13 +117,15 @@ function positionLine(id: string, price: number, text: string, color: string, da
 }
 
 export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView(
-    { symbol, timeframe, chartType, indicators, positions, showPositions, scale, onPositionDraft, onLevelDrag, onCrosshair, onStatus }, ref,
+    { symbol, timeframe, chartType, indicators, positions, showPositions, scale, customIndicators, bot, onPositionDraft, onLevelDrag, onCrosshair, onStatus }, ref,
 ) {
     const host = useRef<HTMLDivElement>(null);
     const chart = useRef<KChart | null>(null);
     const subPanes = useRef<Map<string, string>>(new Map());
     const mainInds = useRef<Set<string>>(new Set());
     const drawings = useRef<string[]>([]);
+    const customPanes = useRef<Map<string, { paneId: string; main: boolean }>>(new Map());
+    const botPanes = useRef<Map<string, string>>(new Map());
     const [status, setStatus] = useState<{ loading: boolean; error: string | null; bars: number }>({ loading: true, error: null, bars: 0 });
     const lastBar = useRef<KLineData | null>(null);
     const seriesKey = `${symbol}|${timeframe}`;
@@ -228,6 +236,69 @@ export const ChartView = React.forwardRef<ChartHandle, Props>(function ChartView
             }
         }
     }, [indicators]);
+
+    // Custom indicators: fetch the values for this series, register a
+    // template per indicator, mount price-pane ones on the candles.
+    const customKey = (customIndicators ?? []).map(i => `${i.id}:${i.color}:${i.pane}`).join('|');
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        const want = new Map((customIndicators ?? []).map(i => [i.id, i]));
+        for (const [id, mount] of [...customPanes.current]) {
+            if (!want.has(id)) { c.removeIndicator(mount.paneId, ensureTemplate({ id, name: id })); customPanes.current.delete(id); }
+        }
+        if (!want.size) return;
+        let alive = true;
+        fetchIndicatorValues(symbol, timeframe, 500).then(rows => {
+            if (!alive || !chart.current) return;
+            for (const row of rows) {
+                const ind = want.get(row.id);
+                if (!ind || !row.points) continue;
+                setSeries(row.id, row.points);
+                const name = ensureTemplate(ind);
+                const existing = customPanes.current.get(ind.id);
+                if (existing) { c.removeIndicator(existing.paneId, name); customPanes.current.delete(ind.id); }
+                // klinecharts reads every field of a line style; a partial one throws.
+                const create = { name, styles: { lines: [{ style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: ind.color || '#ff9800' }] } } as any;
+                if (ind.pane === 'price') {
+                    c.createIndicator(create, true, { id: 'candle_pane' });
+                    customPanes.current.set(ind.id, { paneId: 'candle_pane', main: true });
+                } else {
+                    const paneId = c.createIndicator(create, false, { height: 90, minHeight: 60 });
+                    if (paneId) customPanes.current.set(ind.id, { paneId, main: false });
+                }
+            }
+        }).catch(() => undefined);
+        return () => { alive = false; };
+    }, [customKey, seriesKey, status.bars]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // A bot on the chart: its trades, its open position, and the
+    // indicators its rules read.
+    useEffect(() => {
+        const c = chart.current;
+        if (!c) return;
+        for (const [key, paneId] of [...botPanes.current]) { c.removeIndicator(paneId, key.split('@')[0]); botPanes.current.delete(key); }
+        c.removeOverlay({ groupId: 'bot' } as any);
+        c.removeOverlay({ groupId: 'botOpen' } as any);
+        if (!bot || bot.symbol !== symbol || status.bars === 0) return;
+        drawBotTrades(c, bot);
+        for (const { def } of bot.indicators) {
+            const m = mapSpecIndicator(def);
+            if (!m) continue;
+            const key = `${m.name}@${m.params.join(',')}`;
+            if (botPanes.current.has(key) || indicators.includes(m.name)) continue;
+            const create = { name: m.name, calcParams: m.params } as any;
+            const paneId = m.main ? (c.createIndicator(create, true, { id: 'candle_pane' }), 'candle_pane') : c.createIndicator(create, false, { height: 80, minHeight: 60 });
+            if (paneId) botPanes.current.set(key, paneId);
+        }
+        if (bot.open) {
+            const o = bot.open;
+            const color = o.side === 'BUY' ? '#089981' : '#f23645';
+            c.createOverlay({ ...positionLine(`botopen-${bot.botId}`, o.entryPrice, `${bot.name}: ${o.side} ${o.volume} @ ${fmtPrice(symbol, o.entryPrice)}`, color), groupId: 'botOpen' });
+            if (o.stopLoss) c.createOverlay({ ...positionLine(`botsl-${bot.botId}`, o.stopLoss, `Bot SL ${fmtPrice(symbol, o.stopLoss)}`, '#f23645', true), groupId: 'botOpen' });
+            if (o.takeProfit) c.createOverlay({ ...positionLine(`bottp-${bot.botId}`, o.takeProfit, `Bot TP ${fmtPrice(symbol, o.takeProfit)}`, '#089981', true), groupId: 'botOpen' });
+        }
+    }, [bot, symbol, status.bars]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Position lines.
     useEffect(() => {

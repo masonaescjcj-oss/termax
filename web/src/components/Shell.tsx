@@ -17,6 +17,7 @@ const NAV: Array<{ to: string; label: string }> = [
     { to: '/screener', label: 'Screener' },
     { to: '/bots', label: 'Bots' },
     { to: '/backtests', label: 'Backtests' },
+    { to: '/replay', label: 'Replay' },
     { to: '/journal', label: 'Journal' },
     { to: '/portfolio', label: 'Portfolio' },
     { to: '/library', label: 'Library' },

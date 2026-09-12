@@ -259,3 +259,19 @@ volume spike, crowded trades) and a sentiment bar in the Details panel.
 
 Not yet: screener on other timeframes (the table is hourly only); alerts
 on screener conditions; sentiment history over time.
+
+## Desktop parity with the app (replay, custom indicators, bot on chart, autopsy)
+
+Shipped on the web: Replay page (`/replay`) — candle-by-candle with paper
+Buy/Sell/Close scoring in pips against a bot playing the same window
+through the real engine, its trades revealed as their exits pass, and the
+learn panel showing the interpreter's own trace per bar; custom
+indicators (expression tier) created, toggled and drawn from the
+Indicators menu, on price or in their own pane; a bot's closed trades,
+open levels and rule indicators painted on the chart (`?bot=<id>`, from
+the Bots page); Trade Autopsy dialog from the History tab with the
+candle window, MFE/MAE, after-exit move and verdicts.
+
+Not yet on the web: code-tier indicators authoring (toggle/delete work;
+writing code stays in the app's AI Studio), replay speed persistence,
+journal share card.

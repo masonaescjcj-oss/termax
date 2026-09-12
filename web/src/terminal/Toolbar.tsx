@@ -5,6 +5,7 @@ import { TIMEFRAMES, useQuote, type Timeframe } from '../market';
 import { badgeOf, fmtPrice, infoOf } from '../symbols';
 import { changePct, useDayOpen } from '../daychange';
 import { INDICATORS, type ChartType } from './Chart';
+import type { CustomIndicator } from './customIndicators';
 
 const TYPES: Array<{ id: ChartType; label: string; icon: () => React.JSX.Element }> = [
     { id: 'candle_solid', label: 'Candles', icon: Ic.candles },
@@ -20,6 +21,7 @@ export function Toolbar(props: {
     onSymbolSearch: () => void; onTimeframe: (tf: Timeframe) => void; onChartType: (t: ChartType) => void;
     onToggleIndicator: (name: string) => void; onToggleRight: () => void; onToggleBottom: () => void; onTogglePositions: () => void;
     onScreenshot: () => void; onFullscreen: () => void; onReset: () => void; onOpenTicket: () => void; onAlert: () => void;
+    customIndicators: CustomIndicator[]; onToggleCustom: (ind: CustomIndicator) => void; onManageIndicators: () => void; onReplay: () => void;
 }) {
     const { symbol, timeframe, chartType, indicators } = props;
     const quote = useQuote(symbol);
@@ -72,9 +74,13 @@ export function Toolbar(props: {
                         {INDICATORS.filter(i => i.pane === 'main').map(i => <button key={i.name} className={indicators.includes(i.name) ? 'on' : ''} onClick={() => props.onToggleIndicator(i.name)}>{i.label}</button>)}
                         <div className="lbl">Separate pane</div>
                         {INDICATORS.filter(i => i.pane === 'sub').map(i => <button key={i.name} className={indicators.includes(i.name) ? 'on' : ''} onClick={() => props.onToggleIndicator(i.name)}>{i.label}</button>)}
+                        <div className="lbl">My indicators</div>
+                        {props.customIndicators.map(ci => <button key={ci.id} className={ci.enabled ? 'on' : ''} onClick={() => props.onToggleCustom(ci)}><span className="row"><span style={{ width: 8, height: 8, borderRadius: 4, background: ci.color, display: 'inline-block' }} />{ci.name}</span></button>)}
+                        <button onClick={() => { setMenu(null); props.onManageIndicators(); }} style={{ color: 'var(--blue)', fontWeight: 600 }}>Manage / create…</button>
                     </div>
                 )}
             </div>
+            <button className="tb-btn" onClick={props.onReplay} title="Replay this market candle by candle"><Ic.play /><span className="lbl">Replay</span></button>
             <button className="tb-btn" onClick={props.onAlert} title="Create price alert"><Ic.bell /><span className="lbl">Alert</span></button>
             <button className={`tb-btn ${props.showPositions ? 'active' : ''}`} onClick={props.onTogglePositions} title="Show positions on chart"><Ic.price /><span className="lbl">Positions</span></button>
             <div className="grow" />
